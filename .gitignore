@@ -1,0 +1,13 @@
+# folder
+data/
+model/
+output/
+
+# TensorBoard event files
+runs/
+
+# Python cache
+scripts/__pycache__/
+
+# Weights & Biases
+wandb/

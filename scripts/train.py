@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 #
-# file: $ISIP_EXP/SOGMP/scripts/train.py
+# file: $ISIP_EXP/predOcc/scripts/train.py
 #
 # revision history: xzt
 #  20220824 (TE): first version
@@ -13,7 +13,7 @@
 #  trian_data: the directory of training data
 #  val_data: the directory of valiation data
 #
-# This script trains a SOGMP++ model
+# This script trains a predOcc model
 #------------------------------------------------------------------------------
 
 # import pytorch modules
@@ -22,6 +22,7 @@ import torch
 import torch.nn as nn
 from torch.optim import Adam
 from tqdm import tqdm
+import wandb
 
 # visualize:
 from tensorboardX import SummaryWriter
@@ -31,6 +32,7 @@ import numpy as np
 #
 from model import *
 from local_occ_grid_map import LocalMap
+from transform_util import calc_valid_map
 
 # import modules
 #
@@ -48,7 +50,7 @@ import os
 #
 model_dir = './model/model.pth'  # the path of model storage 
 NUM_ARGS = 3
-NUM_EPOCHS = 100
+NUM_EPOCHS = 50 #100
 BATCH_SIZE = 128 #512 #64
 LEARNING_RATE = "lr"
 BETAS = "betas"
@@ -90,7 +92,6 @@ def adjust_learning_rate(optimizer, epoch):
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
 
-
 # train function:
 def train(model, dataloader, dataset, device, optimizer, criterion, epoch, epochs):
     # set model to training mode:
@@ -131,13 +132,18 @@ def train(model, dataloader, dataset, device, optimizer, criterion, epoch, epoch
         y_odom = torch.zeros(batch_size, SEQ_LEN).to(device)
         theta_odom = torch.zeros(batch_size, SEQ_LEN).to(device)
         # Lidar measurements:
-        distances = scans[:,SEQ_LEN:]
+        distances = scans[:,SEQ_LEN:] # get future 10 frames
         # the angles of lidar scan: -135 ~ 135 degree
         angles = torch.linspace(-(135*np.pi/180), 135*np.pi/180, distances.shape[-1]).to(device)
         # Lidar measurements in X-Y plane: transform to the predicted robot reference frame
         distances_x, distances_y = mask_gridMap.lidar_scan_xy(distances, angles, x_odom, y_odom, theta_odom)
         # discretize to binary maps:
         mask_binary_maps = mask_gridMap.discretize(distances_x, distances_y)
+        # current position:
+        obs_pos_N = positions[:, SEQ_LEN-1]
+        # calculate relative future positions to current position:
+        future_poses = positions[:, SEQ_LEN:] 
+        x_rel, y_rel, th_rel = mask_gridMap.robot_coordinate_transform(future_poses, obs_pos_N)
         
         # Create input grid maps: 
         input_gridMap = LocalMap(X_lim = MAP_X_LIMIT, 
@@ -146,17 +152,10 @@ def train(model, dataloader, dataset, device, optimizer, criterion, epoch, epoch
                     p = P_prior,
                     size=[batch_size, SEQ_LEN],
                     device = device)
-        # current position and velocities: 
-        obs_pos_N = positions[:, SEQ_LEN-1]
-        vel_N = velocities[:, SEQ_LEN-1]
-        # Predict the future origin pose of the robot:
-        T = 1 
-        noise_std = [0, 0, 0] #[0.00111, 0.00112, 0.02319]
-        pos_origin = input_gridMap.origin_pose_prediction(vel_N, obs_pos_N, T, noise_std)
         # robot positions:
         pos = positions[:,:SEQ_LEN]
         # Transform the robot past poses to the predicted reference frame.
-        x_odom, y_odom, theta_odom =  input_gridMap.robot_coordinate_transform(pos, pos_origin)
+        x_odom, y_odom, theta_odom =  input_gridMap.robot_coordinate_transform(pos, obs_pos_N)
         # Lidar measurements:
         distances = scans[:,:SEQ_LEN]
         # the angles of lidar scan: -135 ~ 135 degree
@@ -177,12 +176,18 @@ def train(model, dataloader, dataset, device, optimizer, criterion, epoch, epoch
         optimizer.zero_grad()
         # feed the batch to the network:
         prediction, kl_loss = model(input_binary_maps, input_occ_grid_map)
+
+        # warp the prediction(based on current frame) to the target frame(based on t+1 frame):
+        fin_pred_map, valid_mask = calc_valid_map(prediction, -x_rel[:,0], -y_rel[:,0], -th_rel[:,0], MAP_X_LIMIT, MAP_Y_LIMIT) 
+        valid_mask = valid_mask.float()
+
         # calculate the total loss:
-        ce_loss = criterion(prediction, mask_binary_maps[:,0]).div(batch_size)
+        bce_map = criterion(fin_pred_map, mask_binary_maps[:,0])
+        ce_loss = (bce_map * valid_mask).sum() / (valid_mask.sum() + 1e-6)
         # beta-vae:
         loss = ce_loss + BETA*kl_loss
         # perform back propagation:
-        loss.backward(torch.ones_like(loss))
+        loss.backward()
         optimizer.step()
         # get the loss:
         # multiple GPUs:
@@ -255,6 +260,11 @@ def validate(model, dataloader, dataset, device, criterion):
             distances_x, distances_y = mask_gridMap.lidar_scan_xy(distances, angles, x_odom, y_odom, theta_odom)
             # discretize to binary maps:
             mask_binary_maps = mask_gridMap.discretize(distances_x, distances_y)
+            # current position:
+            obs_pos_N = positions[:, SEQ_LEN-1]
+            # calculate relative future positions to current position:
+            future_poses = positions[:, SEQ_LEN:] 
+            x_rel, y_rel, th_rel = mask_gridMap.robot_coordinate_transform(future_poses, obs_pos_N)
             
             # Create input grid maps: 
             input_gridMap = LocalMap(X_lim = MAP_X_LIMIT, 
@@ -263,17 +273,10 @@ def validate(model, dataloader, dataset, device, criterion):
                         p = P_prior,
                         size=[batch_size, SEQ_LEN],
                         device = device)
-            # current position and velocities: 
-            obs_pos_N = positions[:, SEQ_LEN-1]
-            vel_N = velocities[:, SEQ_LEN-1]
-            # Predict the future origin pose of the robot: n+1 
-            T = 1 
-            noise_std = [0, 0, 0] #[0.00111, 0.00112, 0.02319]
-            pos_origin = input_gridMap.origin_pose_prediction(vel_N, obs_pos_N, T, noise_std)
             # robot positions:
             pos = positions[:,:SEQ_LEN]
             # Transform the robot past poses to the predicted reference frame.
-            x_odom, y_odom, theta_odom =  input_gridMap.robot_coordinate_transform(pos, pos_origin)
+            x_odom, y_odom, theta_odom =  input_gridMap.robot_coordinate_transform(pos, obs_pos_N)
             # Lidar measurements:
             distances = scans[:,:SEQ_LEN]
             # the angles of lidar scan: -135 ~ 135 degree
@@ -293,8 +296,14 @@ def validate(model, dataloader, dataset, device, criterion):
             # feed the batch to the network:
             prediction, kl_loss= model(input_binary_maps, input_occ_grid_map)
             
+            # warp the prediction(based on current frame) to the target frame(based on t+1 frame):
+            fin_pred_map, valid_mask = calc_valid_map(prediction, -x_rel[:,0], -y_rel[:,0], -th_rel[:,0], MAP_X_LIMIT, MAP_Y_LIMIT) 
+            valid_mask = valid_mask.float()
+
             # calculate the total loss:
-            ce_loss = criterion(prediction, mask_binary_maps[:,0]).div(batch_size)
+            bce_map = criterion(fin_pred_map, mask_binary_maps[:,0])
+            ce_loss = (bce_map * valid_mask).sum() / (valid_mask.sum() + 1e-6)
+
             # beta-vae:
             loss = ce_loss + BETA*kl_loss
             # multiple GPUs:
@@ -342,6 +351,18 @@ def main(argv):
     pTrain = argv[1]
     pDev = argv[2]
 
+    wandb.init(
+        project="predOcc",
+        name=f"run_{os.path.basename(mdl_path)}",
+        config={
+            "epochs": NUM_EPOCHS,
+            "batch_size": BATCH_SIZE,
+            "latent_dim": NUM_LATENT_DIM,
+            "beta": BETA,
+            "resolution": RESOLUTION,
+        }
+    )
+
     # get the output directory name:
     odir = os.path.dirname(mdl_path)
 
@@ -378,7 +399,7 @@ def main(argv):
                    EPS: 1e-08,
                    WEIGHT_DECAY: .001 }
     # set the loss criterion and optimizer:
-    criterion = nn.BCELoss(reduction='sum') #, weight=class_weights)
+    criterion = nn.BCELoss(reduction='none') #, weight=class_weights)
     criterion.to(device)
     # create an optimizer, and pass the model params to it:
     optimizer = Adam(model.parameters(), **opt_params)
@@ -421,7 +442,16 @@ def main(argv):
         valid_epoch_loss, valid_kl_epoch_loss, valid_ce_epoch_loss = validate(
             model, dev_dataloader, dev_dataset, device, criterion
         )
-        
+        wandb.log({
+            "train/loss": train_epoch_loss,
+            "train/kl_loss": train_kl_epoch_loss,
+            "train/ce_loss": train_ce_epoch_loss,
+            "val/loss": valid_epoch_loss,
+            "val/kl_loss": valid_kl_epoch_loss,
+            "val/ce_loss": valid_ce_epoch_loss,
+            "lr": optimizer.param_groups[0]["lr"],
+        }, step=epoch)
+
         # log the epoch loss
         writer.add_scalar('training loss',
                         train_epoch_loss,
@@ -465,6 +495,7 @@ def main(argv):
 
     # exit gracefully
     #
+    wandb.finish()
 
     return True
 #

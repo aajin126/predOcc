@@ -18,6 +18,7 @@
 
 # import pytorch modules
 #
+from scripts.transform_util import calc_valid_map
 import torch
 import torch.nn as nn
 from torch.optim import Adam
@@ -45,6 +46,7 @@ import os
 #
 from model import *
 from local_occ_grid_map import LocalMap
+from transform_util import *
 
 #-----------------------------------------------------------------------------
 #
@@ -171,58 +173,88 @@ def main(argv):
             # discretize to binary maps:
             mask_binary_maps = mask_gridMap.discretize(distances_x, distances_y)
             mask_binary_maps = mask_binary_maps.unsqueeze(2)
-            
+
+            # current position:
+            obs_pos_N = positions[:, SEQ_LEN-1]
+            # calculate relative future positions to current position:
+            future_poses = positions[:, SEQ_LEN:] 
+            x_rel, y_rel, th_rel = mask_gridMap.robot_coordinate_transform(future_poses, obs_pos_N)
+       
             prediction_maps = torch.zeros(SEQ_LEN, 1, IMG_SIZE, IMG_SIZE).to(device)
             # multi-step prediction: 10 time steps:
-            for j in range(SEQ_LEN):
-                # Create input grid maps: 
-                input_gridMap = LocalMap(X_lim = MAP_X_LIMIT, 
-                            Y_lim = MAP_Y_LIMIT, 
-                            resolution = RESOLUTION, 
-                            p = P_prior,
-                            size=[batch_size, SEQ_LEN],
-                            device = device)
-                # current position and velocities: 
-                obs_pos_N = positions[:, SEQ_LEN-1]
-                vel_N = velocities[:, SEQ_LEN-1]
-                # Predict the future origin pose of the robot: t+n 
-                T = j+1 #int(t_pred)
-                noise_std = [0, 0, 0]#[0.00111, 0.00112, 0.02319]
-                pos_origin = input_gridMap.origin_pose_prediction(vel_N, obs_pos_N, T, noise_std)
-                # robot positions:
-                pos = positions[:,:SEQ_LEN]
-                # Transform the robot past poses to the predicted reference frame.
-                x_odom, y_odom, theta_odom =  input_gridMap.robot_coordinate_transform(pos, pos_origin)
-                # Lidar measurements:
-                distances = scans[:,:SEQ_LEN]
-                # the angles of lidar scan: -135 ~ 135 degree
-                angles = torch.linspace(-(135*np.pi/180), 135*np.pi/180, distances.shape[-1]).to(device)
-                # Lidar measurements in X-Y plane: transform to the predicted robot reference frame
-                distances_x, distances_y = input_gridMap.lidar_scan_xy(distances, angles, x_odom, y_odom, theta_odom)
-                # discretize to binary maps:
-                input_binary_maps = input_gridMap.discretize(distances_x, distances_y)
-                # local occupancy map update:
-                input_gridMap.update(x_odom, y_odom, distances_x, distances_y, P_free, P_occ)
-                input_occ_grid_map = input_gridMap.to_prob_occ_map(TRESHOLD_P_OCC)
 
-                # binary occupancy maps:
-                input_binary_maps = input_binary_maps.unsqueeze(2)
+            # Create input grid maps: 
+            input_gridMap = LocalMap(X_lim = MAP_X_LIMIT, 
+                        Y_lim = MAP_Y_LIMIT, 
+                        resolution = RESOLUTION, 
+                        p = P_prior,
+                        size=[batch_size, SEQ_LEN],
+                        device = device)
+            pos_origin = positions[:, SEQ_LEN-1]
+            # robot positions:
+            pos = positions[:,:SEQ_LEN]
+            # Transform the robot past poses to the predicted reference frame.
+            x_odom, y_odom, theta_odom =  input_gridMap.robot_coordinate_transform(pos, pos_origin)
+            # Lidar measurements:
+            distances = scans[:,:SEQ_LEN]
+            # the angles of lidar scan: -135 ~ 135 degree
+            angles = torch.linspace(-(135*np.pi/180), 135*np.pi/180, distances.shape[-1]).to(device)
+            # Lidar measurements in X-Y plane: transform to the predicted robot reference frame
+            distances_x, distances_y = input_gridMap.lidar_scan_xy(distances, angles, x_odom, y_odom, theta_odom)
+            # discretize to binary maps:
+            input_binary_maps = input_gridMap.discretize(distances_x, distances_y)
+            # local occupancy map update:
+            input_gridMap.update(x_odom, y_odom, distances_x, distances_y, P_free, P_occ)
+            input_occ_grid_map = input_gridMap.to_prob_occ_map(TRESHOLD_P_OCC)
+            # binary occupancy maps:
+            input_binary_maps = input_binary_maps.unsqueeze(2)
 
-                # feed the batch to the network:
-                num_samples = 32 #1
-                inputs_samples = input_binary_maps.repeat(num_samples,1,1,1,1)
-                inputs_occ_map_samples = input_occ_grid_map.repeat(num_samples,1,1,1,1)
+            # feed the batch to the network:
+            num_samples = 32 #1
+            inputs_samples = input_binary_maps.repeat(num_samples,1,1,1,1)
+            inputs_occ_map_samples = input_occ_grid_map.repeat(num_samples,1,1,1,1)
                 
-                for t in range(T):  
-                    prediction, kl_loss = model(inputs_samples, inputs_occ_map_samples)
-                    prediction = prediction.reshape(-1,1,1,IMG_SIZE,IMG_SIZE)
-                    inputs_samples = torch.cat([inputs_samples[:,1:], prediction], dim=1)
+            for t in range(SEQ_LEN):
+                prediction, kl_loss = model(inputs_samples, inputs_occ_map_samples)
+                prediction = prediction.reshape(-1,1,1,IMG_SIZE,IMG_SIZE)
+                inputs_samples = torch.cat([inputs_samples[:,1:], prediction], dim=1)
 
                 predictions = prediction.squeeze(1)
 
                 # mean and std:
                 pred_mean = torch.mean(predictions, dim=0, keepdim=True)
-                prediction_maps[j, 0] = pred_mean.squeeze()
+                prediction_maps[t, 0] = pred_mean.squeeze()
+
+            fin_prediction_maps = torch.zeros(SEQ_LEN, 1, IMG_SIZE, IMG_SIZE).to(device)
+            valid_masks = torch.zeros(SEQ_LEN, 1, IMG_SIZE, IMG_SIZE).to(device)
+
+            for k in range(SEQ_LEN):
+                pred_t = prediction_maps[k, 0].unsqueeze(0).unsqueeze(0)   # [1,1,H,W]
+
+                pred_warp, valid_mask = calc_valid_map(
+                    pred_t,
+                    -x_rel[:, k], -y_rel[:, k], -th_rel[:, k],
+                    MAP_X_LIMIT, MAP_Y_LIMIT
+                )
+
+                fin_prediction_maps[k, 0] = pred_warp.squeeze(0).squeeze(0)      # [H,W]
+                valid_masks[k, 0] = valid_mask.squeeze(0).squeeze(0).float()
+
+            iou_all_steps = []
+            iou_valid_steps = []
+
+            for m in range(SEQ_LEN):
+                pred = fin_prediction_maps[m, 0]   
+                gt   = mask_binary_maps[0, m, 0]
+                vmsk = valid_masks[m, 0]
+
+                iou_all = compute_iou(pred, gt, valid_mask=None, thr=0.5)
+                iou_v   = compute_iou(pred, gt, valid_mask=vmsk, thr=0.5)
+
+                iou_all_steps.append(iou_all.item())
+                iou_valid_steps.append(iou_v.item())
+
+                print(f"[{m+1}] IoU(all)={iou_all.item():.4f}, IoU(valid)={iou_v.item():.4f}")
 
             # display input occupancy map:
             fig = plt.figure(figsize=(8, 1))
@@ -245,7 +277,7 @@ def main(argv):
             for m in range(SEQ_LEN):   
                 # display the mask of occupancy grids:
                 a = fig.add_subplot(1,10,m+1)
-                pred = prediction_maps[m]
+                pred = fin_prediction_maps[m]
                 input_grid = make_grid(pred.detach().cpu())
                 input_image = input_grid.permute(1, 2, 0)
                 plt.imshow(input_image)
