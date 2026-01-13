@@ -181,9 +181,29 @@ def train(model, dataloader, dataset, device, optimizer, criterion, epoch, epoch
         fin_pred_map, valid_mask = calc_valid_map(prediction, -x_rel[:,0], -y_rel[:,0], -th_rel[:,0], MAP_X_LIMIT, MAP_Y_LIMIT) 
         valid_mask = valid_mask.float()
 
+        if epoch % 10 == 0 and i == 0:
+            n_show = min(4, fin_pred_map.size(0))
+            imgs = []
+            for k in range(n_show):
+                gt     = mask_binary_maps[k, 0, 0].float().detach().cpu().numpy()   # GT(t+1)
+                pred_t = prediction[k, 0].float().detach().cpu().numpy()            # pred(t)
+                warped = fin_pred_map[k, 0].float().detach().cpu().numpy()          # warped(t+1)
+                vmask  = valid_mask[k, 0].float().detach().cpu().numpy()            # valid mask
+
+                to_u8 = lambda x: (np.clip(x, 0, 1) * 255).astype(np.uint8)
+                top = np.concatenate([to_u8(gt), to_u8(pred_t)], axis=1)
+                bot = np.concatenate([to_u8(warped), to_u8(vmask)], axis=1)
+                tile = np.concatenate([top, bot], axis=0)
+
+                imgs.append(wandb.Image(tile, caption=f"ep{epoch} idx{k} | TL:GT TR:pred(t) BL:warp BR:valid"))
+            wandb.log({"viz/maps": imgs}, step=epoch)
+
         # calculate the total loss:
         bce_map = criterion(fin_pred_map, mask_binary_maps[:,0])
-        ce_loss = (bce_map * valid_mask).sum() / (valid_mask.sum() + 1e-6)
+        H, W = bce_map.shape[-2:]
+        # scaling
+        scale = (H * W * batch_size) / (valid_mask.sum() + 1e-6)
+        ce_loss = (bce_map * valid_mask).sum() / batch_size * scale
         # beta-vae:
         loss = ce_loss + BETA*kl_loss
         # perform back propagation:
@@ -302,7 +322,11 @@ def validate(model, dataloader, dataset, device, criterion):
 
             # calculate the total loss:
             bce_map = criterion(fin_pred_map, mask_binary_maps[:,0])
-            ce_loss = (bce_map * valid_mask).sum() / (valid_mask.sum() + 1e-6)
+
+            H, W = bce_map.shape[-2:]
+            # scaling
+            scale = (H * W * batch_size) / (valid_mask.sum() + 1e-6)
+            ce_loss = (bce_map * valid_mask).sum() / batch_size * scale
 
             # beta-vae:
             loss = ce_loss + BETA*kl_loss
@@ -483,6 +507,15 @@ def main(argv):
                 state = {'model':model.state_dict(), 'optimizer':optimizer.state_dict(), 'epoch':epoch}
             path='./model/model' + str(epoch) +'.pth'
             torch.save(state, path)
+
+            # ---- wandb checkpoint upload every 10 epochs ----
+            artifact = wandb.Artifact(
+                name=f"predOcc-{os.path.basename(mdl_path)}-ep{epoch}",
+                type="checkpoint",
+                metadata={"epoch": epoch, "lr": optimizer.param_groups[0]["lr"]}
+            )
+            artifact.add_file(path)
+            wandb.log_artifact(artifact)
 
         epoch_num = epoch
 

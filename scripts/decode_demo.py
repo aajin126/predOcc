@@ -18,7 +18,6 @@
 
 # import pytorch modules
 #
-from scripts.transform_util import calc_valid_map
 import torch
 import torch.nn as nn
 from torch.optim import Adam
@@ -47,6 +46,7 @@ import os
 from model import *
 from local_occ_grid_map import LocalMap
 from transform_util import *
+from eval import *
 
 #-----------------------------------------------------------------------------
 #
