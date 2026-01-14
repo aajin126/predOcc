@@ -40,7 +40,7 @@ def calc_valid_map(source_map, dx, dy, dtheta, x_lim, y_lim):
     grid = torch.stack([u_src, v_src], dim=-1)  # (B,H,W,2)
 
     # prediction map aligned to the t+1 frame
-    fin_pred_map = F.grid_sample(source_map, grid, mode='bilinear',
+    fin_pred_map = F.grid_sample(source_map, grid, mode='nearest',
                            padding_mode='zeros', align_corners=True)
 
     # validity mask over the target frame, marking pixels that fall within the source map bounds
@@ -48,3 +48,51 @@ def calc_valid_map(source_map, dx, dy, dtheta, x_lim, y_lim):
     valid_mask = valid_mask.float().unsqueeze(1)  # (B,1,H,W)
 
     return fin_pred_map, valid_mask
+
+
+# ---- 여기부터 "맵 만들기" ----
+device = "cuda" if torch.cuda.is_available() else "cpu"
+
+# 1) t frame 기준 로봇 [0,0,0]일 때 맵 (네가 준 1번)
+map1_t = torch.tensor([
+    [1,0,1,0,0],
+    [1,0,1,0,1],
+    [1,0,0,0,1],
+    [0,0,0,0,1],
+    [0,0,0,0,0],  # <- (0,0,0) 표시한 셀은 값 0이라고 했으니 0으로 둠
+], dtype=torch.float32, device=device).view(1,1,5,5)
+
+# 2) t frame 기준인데 t+1 time step일 때 맵 = source_map (네가 준 2번)
+source_map = torch.tensor([
+    [1,0,0,0,0],
+    [1,0,1,0,1],
+    [1,0,1,0,1],
+    [0,0,0,0,1],
+    [0,0,0,0,0],
+], dtype=torch.float32, device=device).view(1,1,5,5)
+
+# 3) t+1 frame 기준 t+1 time step GT (네가 준 3번)
+gt_map_t1 = torch.tensor([
+    [1,0,0,0,0],
+    [1,0,0,0,0],
+    [1,0,1,0,1],
+    [1,0,1,0,1],
+    [0,0,0,0,1],
+], dtype=torch.float32, device=device).view(1,1,5,5)
+
+# ---- motion: t -> t+1 (dx=0, dy=1, dtheta=0) ----
+dx = torch.tensor([0.0], dtype=torch.float32, device=device)
+dy = torch.tensor([1.0], dtype=torch.float32, device=device)
+dtheta = torch.tensor([0.0], dtype=torch.float32, device=device)
+
+x_lim = (0.0, 4.0)
+y_lim = (-2.0, 2.0)
+
+fin_pred_map, valid_mask = calc_valid_map(source_map, -dx, -dy, -dtheta, x_lim, y_lim)
+
+print("map1_t:\n", map1_t[0,0].int().cpu())
+print("source_map:\n", source_map[0,0].int().cpu())
+print("fin_pred_map:\n", fin_pred_map[0,0].int().cpu())
+print("gt_map_t1:\n", gt_map_t1[0,0].int().cpu())
+print("valid_mask:\n", valid_mask[0,0].int().cpu())
+print("L1 diff(fin_pred vs GT):", (fin_pred_map - gt_map_t1).abs().sum().item())

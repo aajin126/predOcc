@@ -233,28 +233,28 @@ def main(argv):
 
                 pred_warp, valid_mask = calc_valid_map(
                     pred_t,
-                    -x_rel[:, k], -y_rel[:, k], -th_rel[:, k],
+                    x_rel[:, k], y_rel[:, k], th_rel[:, k],
                     MAP_X_LIMIT, MAP_Y_LIMIT
                 )
 
                 fin_prediction_maps[k, 0] = pred_warp.squeeze(0).squeeze(0)      # [H,W]
                 valid_masks[k, 0] = valid_mask.squeeze(0).squeeze(0).float()
 
-            iou_all_steps = []
-            iou_valid_steps = []
+            # iou_all_steps = []
+            # iou_valid_steps = []
 
-            for m in range(SEQ_LEN):
-                pred = fin_prediction_maps[m, 0]   
-                gt   = mask_binary_maps[0, m, 0]
-                vmsk = valid_masks[m, 0]
+            # for m in range(SEQ_LEN):
+            #     pred = fin_prediction_maps[m, 0]   
+            #     gt   = mask_binary_maps[0, m, 0]
+            #     vmsk = valid_masks[m, 0]
 
-                iou_all = compute_iou(pred, gt, valid_mask=None, thr=0.5)
-                iou_v   = compute_iou(pred, gt, valid_mask=vmsk, thr=0.5)
+            #     iou_all = compute_iou(pred, gt, valid_mask=None, thr=0.5)
+            #     iou_v   = compute_iou(pred, gt, valid_mask=vmsk, thr=0.5)
 
-                iou_all_steps.append(iou_all.item())
-                iou_valid_steps.append(iou_v.item())
+            #     iou_all_steps.append(iou_all.item())
+            #     iou_valid_steps.append(iou_v.item())
 
-                print(f"[{m+1}] IoU(all)={iou_all.item():.4f}, IoU(valid)={iou_v.item():.4f}")
+            #     print(f"[{m+1}] IoU(all)={iou_all.item():.4f}, IoU(valid)={iou_v.item():.4f}")
 
             # display input occupancy map:
             fig = plt.figure(figsize=(8, 1))
@@ -272,6 +272,7 @@ def main(argv):
                 a.set_title(input_title, fontdict={'fontsize': fontsize})
             input_img_name = "./output/mask" + str(i)+ ".jpg"
             plt.savefig(input_img_name)
+            plt.close(fig)
 
             fig = plt.figure(figsize=(8, 1))
             for m in range(SEQ_LEN):   
@@ -287,7 +288,23 @@ def main(argv):
                 a.set_title(input_title, fontdict={'fontsize': fontsize})
             input_img_name = "./output/pred" + str(i)+ ".jpg"
             plt.savefig(input_img_name)
-            plt.show()
+            plt.close(fig)
+
+            fig = plt.figure(figsize=(8, 1))
+            for m in range(SEQ_LEN):
+                a = fig.add_subplot(1, 10, m+1)
+
+                occ = input_occ_grid_map[0, m]
+                occ2d = input_occ_grid_map[0].detach().cpu().numpy()
+                plt.imshow(occ2d, cmap='gray')
+                plt.xticks([])
+                plt.yticks([])
+                fontsize = 8
+                a.set_title("n=" + str(m+1), fontdict={'fontsize': fontsize})
+
+            occ_img_name = "./output/input_occ_map" + str(i) + ".jpg"
+            plt.savefig(occ_img_name)
+            plt.close(fig)
 
             print(i)
         

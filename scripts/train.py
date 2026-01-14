@@ -178,17 +178,17 @@ def train(model, dataloader, dataset, device, optimizer, criterion, epoch, epoch
         prediction, kl_loss = model(input_binary_maps, input_occ_grid_map)
 
         # warp the prediction(based on current frame) to the target frame(based on t+1 frame):
-        fin_pred_map, valid_mask = calc_valid_map(prediction, -x_rel[:,0], -y_rel[:,0], -th_rel[:,0], MAP_X_LIMIT, MAP_Y_LIMIT) 
+        fin_pred_map, valid_mask = calc_valid_map(prediction, x_rel[:,0], y_rel[:,0], th_rel[:,0], MAP_X_LIMIT, MAP_Y_LIMIT) 
         valid_mask = valid_mask.float()
 
-        if epoch % 10 == 0 and i == 0:
+        if epoch % 5 == 0 and i == 0:
             n_show = min(4, fin_pred_map.size(0))
             imgs = []
             for k in range(n_show):
-                gt     = mask_binary_maps[k, 0, 0].float().detach().cpu().numpy()   # GT(t+1)
-                pred_t = prediction[k, 0].float().detach().cpu().numpy()            # pred(t)
-                warped = fin_pred_map[k, 0].float().detach().cpu().numpy()          # warped(t+1)
-                vmask  = valid_mask[k, 0].float().detach().cpu().numpy()            # valid mask
+                gt = mask_binary_maps[k, 0, 0].float().detach().cpu().numpy()   # GT(t+1)
+                pred_t = prediction[k, 0].float().detach().cpu().numpy()        # pred(t)
+                warped = fin_pred_map[k, 0].float().detach().cpu().numpy()      # warped(t+1)
+                vmask  = valid_mask[k, 0].float().detach().cpu().numpy()        # valid mask
 
                 to_u8 = lambda x: (np.clip(x, 0, 1) * 255).astype(np.uint8)
                 top = np.concatenate([to_u8(gt), to_u8(pred_t)], axis=1)
@@ -200,10 +200,12 @@ def train(model, dataloader, dataset, device, optimizer, criterion, epoch, epoch
 
         # calculate the total loss:
         bce_map = criterion(fin_pred_map, mask_binary_maps[:,0])
-        H, W = bce_map.shape[-2:]
-        # scaling
-        scale = (H * W * batch_size) / (valid_mask.sum() + 1e-6)
-        ce_loss = (bce_map * valid_mask).sum() / batch_size * scale
+        B, _, H, W = bce_map.shape
+        # the number of valid pixels per sample:
+        valid_sum = valid_mask.view(B, -1).sum(dim=1) 
+        # total sum of loss :
+        loss_sum  = (bce_map * valid_mask).view(B, -1).sum(dim=1)
+        ce_loss = (loss_sum * (H*W) / valid_sum).mean()
         # beta-vae:
         loss = ce_loss + BETA*kl_loss
         # perform back propagation:
@@ -317,7 +319,7 @@ def validate(model, dataloader, dataset, device, criterion):
             prediction, kl_loss= model(input_binary_maps, input_occ_grid_map)
             
             # warp the prediction(based on current frame) to the target frame(based on t+1 frame):
-            fin_pred_map, valid_mask = calc_valid_map(prediction, -x_rel[:,0], -y_rel[:,0], -th_rel[:,0], MAP_X_LIMIT, MAP_Y_LIMIT) 
+            fin_pred_map, valid_mask = calc_valid_map(prediction, x_rel[:,0], y_rel[:,0], th_rel[:,0], MAP_X_LIMIT, MAP_Y_LIMIT) 
             valid_mask = valid_mask.float()
 
             # calculate the total loss:
@@ -325,8 +327,8 @@ def validate(model, dataloader, dataset, device, criterion):
 
             H, W = bce_map.shape[-2:]
             # scaling
-            scale = (H * W * batch_size) / (valid_mask.sum() + 1e-6)
-            ce_loss = (bce_map * valid_mask).sum() / batch_size * scale
+            scale = (H * W) / (valid_mask.sum() + 1e-6)
+            ce_loss = (bce_map * valid_mask).sum() * scale
 
             # beta-vae:
             loss = ce_loss + BETA*kl_loss
