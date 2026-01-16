@@ -178,7 +178,7 @@ def train(model, dataloader, dataset, device, optimizer, criterion, epoch, epoch
         prediction, kl_loss = model(input_binary_maps, input_occ_grid_map)
 
         # warp the prediction(based on current frame) to the target frame(based on t+1 frame):
-        fin_pred_map, valid_mask = calc_valid_map(prediction, x_rel[:,0], y_rel[:,0], th_rel[:,0], MAP_X_LIMIT, MAP_Y_LIMIT) 
+        fin_pred_map, valid_mask = calc_valid_map(prediction, -x_rel[:,0], -y_rel[:,0], -th_rel[:,0], MAP_X_LIMIT, MAP_Y_LIMIT) 
         valid_mask = valid_mask.float()
 
         if epoch % 5 == 0 and i == 0:
@@ -319,7 +319,7 @@ def validate(model, dataloader, dataset, device, criterion):
             prediction, kl_loss= model(input_binary_maps, input_occ_grid_map)
             
             # warp the prediction(based on current frame) to the target frame(based on t+1 frame):
-            fin_pred_map, valid_mask = calc_valid_map(prediction, x_rel[:,0], y_rel[:,0], th_rel[:,0], MAP_X_LIMIT, MAP_Y_LIMIT) 
+            fin_pred_map, valid_mask = calc_valid_map(prediction, -x_rel[:,0], -y_rel[:,0], -th_rel[:,0], MAP_X_LIMIT, MAP_Y_LIMIT) 
             valid_mask = valid_mask.float()
 
             # calculate the total loss:
