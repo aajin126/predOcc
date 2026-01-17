@@ -187,7 +187,7 @@ def transform_map(source_map, dx, dy, dtheta, x_lim, y_lim):
 
     return interp_pred_map, merged_mask
 
-device = "cuda" if torch.cuda.is_available() else "cpu"
+#device = "cuda" if torch.cuda.is_available() else "cpu"
 
 # # 1) t frame 기준 로봇 [0,0,0]일 때 맵 
 # map1_t = torch.tensor([

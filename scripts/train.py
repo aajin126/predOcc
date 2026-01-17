@@ -200,8 +200,8 @@ def train(model, dataloader, dataset, device, optimizer, criterion, epoch, epoch
 
         B, _, H, W = fin_pred_map.shape
         # the number of valid pixels per sample:
-        valid_sum = valid_mask.flatten(1).sum(1)
-        valid_ratio = valid_sum.mean()/(H*W)
+        #valid_sum = valid_mask.flatten(1).sum(1)
+        #valid_ratio = valid_sum.mean()/(H*W)
         #print(f"Batch {i}: valid ratio: {valid_ratio:.4f}")
         # calculate the total loss:
         ce_loss = criterion(fin_pred_map, mask_binary_maps[:,0]).div(batch_size)
