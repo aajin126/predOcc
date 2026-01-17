@@ -32,7 +32,7 @@ import numpy as np
 #
 from model import *
 from local_occ_grid_map import LocalMap
-from transform_util import *
+from util import *
 
 # import modules
 #
@@ -181,7 +181,7 @@ def train(model, dataloader, dataset, device, optimizer, criterion, epoch, epoch
         fin_pred_map, valid_mask = transform_map(prediction, x_rel[:,0], y_rel[:,0], th_rel[:,0], MAP_X_LIMIT, MAP_Y_LIMIT) 
         valid_mask = valid_mask.float()
 
-        if epoch % 5 == 0 and i == 0:
+        if i == 0:
             n_show = min(4, fin_pred_map.size(0))
             imgs = []
             for k in range(n_show):
@@ -198,18 +198,17 @@ def train(model, dataloader, dataset, device, optimizer, criterion, epoch, epoch
                 imgs.append(wandb.Image(tile, caption=f"ep{epoch} idx{k} | TL:GT TR:pred(t) BL:warp BR:valid"))
             wandb.log({"viz/maps": imgs}, step=epoch)
 
-        # calculate the total loss:
-        bce_map = criterion(fin_pred_map, mask_binary_maps[:,0])
-        B, _, H, W = bce_map.shape
+        B, _, H, W = fin_pred_map.shape
         # the number of valid pixels per sample:
-        valid_sum = valid_mask.view(B, -1).sum(dim=1) 
-        # total sum of loss :
-        loss_sum  = (bce_map * valid_mask).view(B, -1).sum(dim=1)
-        ce_loss = (loss_sum * (H*W) / valid_sum).mean()
-        # beta-vae:
+        valid_sum = valid_mask.flatten(1).sum(1)
+        valid_ratio = valid_sum.mean()/(H*W)
+        #print(f"Batch {i}: valid ratio: {valid_ratio:.4f}")
+        # calculate the total loss:
+        ce_loss = criterion(fin_pred_map, mask_binary_maps[:,0]).div(batch_size)
+        # total loss:
         loss = ce_loss + BETA*kl_loss
         # perform back propagation:
-        loss.backward()
+        loss.backward(torch.ones_like(loss))
         optimizer.step()
         # get the loss:
         # multiple GPUs:
@@ -323,15 +322,10 @@ def validate(model, dataloader, dataset, device, criterion):
             valid_mask = valid_mask.float()
 
             # calculate the total loss:
-            bce_map = criterion(fin_pred_map, mask_binary_maps[:,0])
-
-            H, W = bce_map.shape[-2:]
-            # scaling
-            scale = (H * W) / (valid_mask.sum() + 1e-6)
-            ce_loss = (bce_map * valid_mask).sum() * scale
-
-            # beta-vae:
+            ce_loss = criterion(fin_pred_map, mask_binary_maps[:,0]).div(batch_size)
+            # total loss:
             loss = ce_loss + BETA*kl_loss
+
             # multiple GPUs:
             if torch.cuda.device_count() > 1:
                 loss = loss.mean()
@@ -425,7 +419,7 @@ def main(argv):
                    EPS: 1e-08,
                    WEIGHT_DECAY: .001 }
     # set the loss criterion and optimizer:
-    criterion = nn.BCELoss(reduction='none') #, weight=class_weights)
+    criterion = nn.BCELoss(reduction='sum') 
     criterion.to(device)
     # create an optimizer, and pass the model params to it:
     optimizer = Adam(model.parameters(), **opt_params)

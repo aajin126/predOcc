@@ -64,6 +64,7 @@ def occ_interp(source_map, target_map, dx, dy, dtheta, x_lim, y_lim, occ_th=0.1)
         vx = vx[v_has]
         vy = vy[v_has]
         corner_p = (sum_p[v_has] / cnt_p[v_has]) # mean prob for each corner
+        corner_p = corner_p * 0.7
 
         #  grid -> world in frame t
         x_v_t = x_min + vx.to(dtype) * res_x
@@ -128,6 +129,10 @@ def transform_map(source_map, dx, dy, dtheta, x_lim, y_lim):
     B, C, H, W = source_map.shape
     device = source_map.device
     dtype  = source_map.dtype
+    
+    dx = dx.expand(B)
+    dy = dy.expand(B)
+    dtheta = dtheta.expand(B)  
 
     x_min, x_max = x_lim
     y_min, y_max = y_lim
@@ -177,53 +182,57 @@ def transform_map(source_map, dx, dy, dtheta, x_lim, y_lim):
 
     interp_pred_map, mask_interp = occ_interp(source_map, fin_pred_map, dx, dy, dtheta, x_lim, y_lim)
     
-    return fin_pred_map, interp_pred_map, valid_mask, mask_interp
+    merged_mask = (mask_interp > 0) | (valid_mask > 0)
+    merged_mask = merged_mask.to(dtype) 
+
+    return interp_pred_map, merged_mask
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
-# 1) t frame 기준 로봇 [0,0,0]일 때 맵 (네가 준 1번)
-map1_t = torch.tensor([
-    [1,0,0,0,0],
-    [1,0,0,0,1],
-    [1,0,0,0,1],
-    [0,0,1,0,1],
-    [0,0,1,0,0],
-], dtype=torch.float32, device=device).view(1,1,5,5)
+# # 1) t frame 기준 로봇 [0,0,0]일 때 맵 
+# map1_t = torch.tensor([
+#     [1,0,0,0,0],
+#     [1,0,0,0,1],
+#     [1,0,0,0,1],
+#     [0,0,1,0,1],
+#     [0,0,1,0,0],
+# ], dtype=torch.float32, device=device).view(1,1,5,5)
 
-# 2) t frame 기준인데 t+1 time step일 때 맵 = source_map (네가 준 2번)
-source_map = torch.tensor([
-    [1,0,0,0,0],
-    [1,0,0,0,1],
-    [1,0,1,0,1],
-    [0,0,1,0,1],
-    [0,0,0,0,0], 
-], dtype=torch.float32, device=device).view(1,1,5,5)
+# # 2) t frame 기준인데 t+1 time step일 때 맵 = source_map 
+# source_map = torch.tensor([
+#     [1,0,0,0,0],
+#     [1,0,0,0,1],
+#     [1,0,1,0,1],
+#     [0,0,1,0,1],
+#     [0,0,0,0,0], 
+# ], dtype=torch.float32, device=device).view(1,1,5,5)
 
-# 3) t+1 frame 기준 t+1 time step GT (네가 준 3번)
-gt_map_t1 = torch.tensor([
-    [1,0,0,0,1],
-    [1,0,1,0,1],
-    [0,0,1,0,1],
-    [0,0,0,0,0],
-    [0,0,0,0,0],
-], dtype=torch.float32, device=device).view(1,1,5,5)
+# # 3) t+1 frame 기준 t+1 time step GT 
+# gt_map_t1 = torch.tensor([
+#     [1,0,0,0,1],
+#     [1,0,1,0,1],
+#     [0,0,1,0,1],
+#     [0,0,0,0,0],
+#     [0,0,0,0,0],
+# ], dtype=torch.float32, device=device).view(1,1,5,5)
 
-pi_ = math.pi
-# 4) ---- motion: t -> t+1 (dx=0, dy=1, dtheta=0) ---- (네가 준 4번)
-dx = torch.tensor([0.0], dtype=torch.float32, device=device)
-dy = torch.tensor([0.0], dtype=torch.float32, device=device)
-dtheta = torch.tensor([pi_/6], dtype=torch.float32, device=device)
+# pi_ = math.pi
+# # 4) ---- motion: t -> t+1 (dx=0, dy=1, dtheta=0) ---- (네가 준 4번)
+# dx = torch.tensor([0.0], dtype=torch.float32, device=device)
+# dy = torch.tensor([0.0], dtype=torch.float32, device=device)
+# dtheta = torch.tensor([pi_/6], dtype=torch.float32, device=device)
 
-x_lim = [0.0, 5.0]
-y_lim = [-2.5, 2.5]
+# x_lim = [0.0, 5.0]
+# y_lim = [-2.5, 2.5]
 
-fin_pred_map, interp_pred_map,valid_mask, mask_interp = transform_map(source_map, dx, dy, dtheta, x_lim, y_lim)
+# fin_pred_map, interp_pred_map,valid_mask, mask_interp, merged_mask = transform_map(source_map, dx, dy, dtheta, x_lim, y_lim)
 
-print("map1_t:\n", map1_t[0,0].double().cpu())
-print("source_map:\n", source_map[0,0].double().cpu())
-print("fin_pred_map:\n", fin_pred_map[0,0].double().cpu())
-print("interp_pred_map:\n", interp_pred_map[0,0].double().cpu())
-print("valid_mask:\n", valid_mask[0,0].double().cpu())
-print("mask_interp:\n", mask_interp[0,0].double().cpu())
-#print("gt_map_t1:\n", gt_map_t1[0,0].double().cpu())
-#print("L1 diff(fin_pred vs GT):", (fin_pred_map - gt_map_t1).abs().sum().item())
+# print("map1_t:\n", map1_t[0,0].double().cpu())
+# print("source_map:\n", source_map[0,0].double().cpu())
+# print("fin_pred_map:\n", fin_pred_map[0,0].double().cpu())
+# print("interp_pred_map:\n", interp_pred_map[0,0].double().cpu())
+# print("merged map:\n", merged_mask[0,0].double().cpu())
+# print("valid_mask:\n", valid_mask[0,0].double().cpu())
+# print("mask_interp:\n", mask_interp[0,0].double().cpu())
+# print("gt_map_t1:\n", gt_map_t1[0,0].double().cpu())
+# print("L1 diff(fin_pred vs GT):", (fin_pred_map - gt_map_t1).abs().sum().item())

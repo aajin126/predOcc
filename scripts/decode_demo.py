@@ -45,7 +45,7 @@ import os
 #
 from model import *
 from local_occ_grid_map import LocalMap
-from transform_util import *
+from util import *
 from eval import *
 
 #-----------------------------------------------------------------------------
@@ -181,6 +181,7 @@ def main(argv):
             x_rel, y_rel, th_rel = mask_gridMap.robot_coordinate_transform(future_poses, obs_pos_N)
        
             prediction_maps = torch.zeros(SEQ_LEN, 1, IMG_SIZE, IMG_SIZE).to(device)
+            prediction_maps_org = torch.zeros(SEQ_LEN, 1, IMG_SIZE, IMG_SIZE).to(device)
             # multi-step prediction: 10 time steps:
 
             # Create input grid maps: 
@@ -214,47 +215,21 @@ def main(argv):
             inputs_samples = input_binary_maps.repeat(num_samples,1,1,1,1)
             inputs_occ_map_samples = input_occ_grid_map.repeat(num_samples,1,1,1,1)
                 
-            for t in range(SEQ_LEN):
+            for k in range(SEQ_LEN):  
                 prediction, kl_loss = model(inputs_samples, inputs_occ_map_samples)
+                prediction_t, _ = transform_map(prediction, x_rel[:, k], y_rel[:, k], th_rel[:, k], MAP_X_LIMIT, MAP_Y_LIMIT)
                 prediction = prediction.reshape(-1,1,1,IMG_SIZE,IMG_SIZE)
+                prediction_t = prediction_t.reshape(-1,1,1,IMG_SIZE,IMG_SIZE)
                 inputs_samples = torch.cat([inputs_samples[:,1:], prediction], dim=1)
 
-                predictions = prediction.squeeze(1)
+                predictions = prediction_t.squeeze(1) 
+                predictions_origin = prediction.squeeze(1)
 
-                # mean and std:
                 pred_mean = torch.mean(predictions, dim=0, keepdim=True)
-                prediction_maps[t, 0] = pred_mean.squeeze()
+                prediction_maps[k, 0] = pred_mean.squeeze()
 
-            fin_prediction_maps = torch.zeros(SEQ_LEN, 1, IMG_SIZE, IMG_SIZE).to(device)
-            valid_masks = torch.zeros(SEQ_LEN, 1, IMG_SIZE, IMG_SIZE).to(device)
-
-            for k in range(SEQ_LEN):
-                pred_t = prediction_maps[k, 0].unsqueeze(0).unsqueeze(0)   # [1,1,H,W]
-
-                pred_warp, valid_mask = calc_valid_map(
-                    pred_t,
-                    x_rel[:, k], y_rel[:, k], th_rel[:, k],
-                    MAP_X_LIMIT, MAP_Y_LIMIT
-                )
-
-                fin_prediction_maps[k, 0] = pred_warp.squeeze(0).squeeze(0)      # [H,W]
-                valid_masks[k, 0] = valid_mask.squeeze(0).squeeze(0).float()
-
-            # iou_all_steps = []
-            # iou_valid_steps = []
-
-            # for m in range(SEQ_LEN):
-            #     pred = fin_prediction_maps[m, 0]   
-            #     gt   = mask_binary_maps[0, m, 0]
-            #     vmsk = valid_masks[m, 0]
-
-            #     iou_all = compute_iou(pred, gt, valid_mask=None, thr=0.5)
-            #     iou_v   = compute_iou(pred, gt, valid_mask=vmsk, thr=0.5)
-
-            #     iou_all_steps.append(iou_all.item())
-            #     iou_valid_steps.append(iou_v.item())
-
-            #     print(f"[{m+1}] IoU(all)={iou_all.item():.4f}, IoU(valid)={iou_v.item():.4f}")
+                pred_mean_origin = torch.mean(predictions_origin, dim=0, keepdim=True)
+                prediction_maps_org[k, 0] = pred_mean_origin.squeeze()
 
             # display input occupancy map:
             fig = plt.figure(figsize=(8, 1))
@@ -278,7 +253,7 @@ def main(argv):
             for m in range(SEQ_LEN):   
                 # display the mask of occupancy grids:
                 a = fig.add_subplot(1,10,m+1)
-                pred = fin_prediction_maps[m]
+                pred = prediction_maps[m]
                 input_grid = make_grid(pred.detach().cpu())
                 input_image = input_grid.permute(1, 2, 0)
                 plt.imshow(input_image)
@@ -291,19 +266,19 @@ def main(argv):
             plt.close(fig)
 
             fig = plt.figure(figsize=(8, 1))
-            for m in range(SEQ_LEN):
-                a = fig.add_subplot(1, 10, m+1)
-
-                occ = input_occ_grid_map[0, m]
-                occ2d = input_occ_grid_map[0].detach().cpu().numpy()
-                plt.imshow(occ2d, cmap='gray')
+            for m in range(SEQ_LEN):   
+                # display the mask of occupancy grids:
+                a = fig.add_subplot(1,10,m+1)
+                pred = prediction_maps_org[m]
+                input_grid = make_grid(pred.detach().cpu())
+                input_image = input_grid.permute(1, 2, 0)
+                plt.imshow(input_image)
                 plt.xticks([])
                 plt.yticks([])
-                fontsize = 8
-                a.set_title("n=" + str(m+1), fontdict={'fontsize': fontsize})
-
-            occ_img_name = "./output/input_occ_map" + str(i) + ".jpg"
-            plt.savefig(occ_img_name)
+                input_title = "n=" + str(m+1)
+                a.set_title(input_title, fontdict={'fontsize': fontsize})
+            input_img_name = "./output/pred_org" + str(i)+ ".jpg"
+            plt.savefig(input_img_name)
             plt.close(fig)
 
             print(i)
