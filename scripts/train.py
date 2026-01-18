@@ -394,6 +394,7 @@ def main(argv):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     print('...Start reading data...')
+
     ### training data ###
     # training set and training data loader
     train_dataset = VaeTestDataset(pTrain, 'train')
