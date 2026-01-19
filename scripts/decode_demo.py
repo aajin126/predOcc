@@ -22,6 +22,7 @@ import torch
 import torch.nn as nn
 from torch.optim import Adam
 from tqdm import tqdm
+import time
 
 # visualize:
 from tensorboardX import SummaryWriter
@@ -35,6 +36,7 @@ import matplotlib
 from torchvision.utils import make_grid
 #from utils import save_reconstructed_images, image_to_vid, save_loss_plot
 matplotlib.style.use('ggplot')
+import pandas as pd
 
 # import modules
 #
@@ -138,6 +140,8 @@ def main(argv):
 
     # for each batch in increments of batch size:
     counter = 0
+    all_rows = []       
+    csv_path = os.path.join("output", "v1.0(0.2)", "eval_table.csv")
     # get the number of batches (ceiling of train_data/batch_size):
     num_batches = int(len(eval_dataset)/eval_dataloader.batch_size)
     with torch.no_grad():
@@ -214,7 +218,12 @@ def main(argv):
             num_samples = 32 #1
             inputs_samples = input_binary_maps.repeat(num_samples,1,1,1,1)
             inputs_occ_map_samples = input_occ_grid_map.repeat(num_samples,1,1,1,1)
-                
+            
+            # start timing
+            if device.type == "cuda":
+                torch.cuda.synchronize()
+            t0 = time.perf_counter()
+
             for k in range(SEQ_LEN):  
                 prediction, kl_loss = model(inputs_samples, inputs_occ_map_samples)
                 prediction_t, _ = transform_map(prediction, x_rel[:, k], y_rel[:, k], th_rel[:, k], MAP_X_LIMIT, MAP_Y_LIMIT)
@@ -231,6 +240,22 @@ def main(argv):
                 pred_mean_origin = torch.mean(predictions_origin, dim=0, keepdim=True)
                 prediction_maps_org[k, 0] = pred_mean_origin.squeeze()
 
+            # end timing
+            if device.type == "cuda":
+                torch.cuda.synchronize()
+            t1 = time.perf_counter()
+            total_pred_time_ms = (t1 - t0) * 1000
+
+            row = {"i": int(i), "Inference_time": float(total_pred_time_ms)}
+            for n in range(SEQ_LEN):
+                gt_map = mask_binary_maps[0, n]
+                pred_map = prediction_maps[n]   
+                row[f"n={n+1}"] = float(compute_iou(pred_map, gt_map, occ_thr=0.2).item())
+            all_rows.append(row)
+
+            if (i + 1) % 100 == 0:
+                pd.DataFrame(all_rows).to_csv(csv_path, index=False)
+
             # display input occupancy map:
             fig = plt.figure(figsize=(8, 1))
             for m in range(SEQ_LEN):   
@@ -245,7 +270,7 @@ def main(argv):
                 fontsize = 8
                 input_title = "n=" + str(m+1)
                 a.set_title(input_title, fontdict={'fontsize': fontsize})
-            input_img_name = "./output/mask" + str(i)+ ".jpg"
+            input_img_name = "./output/v1.0(0.2)/mask" + str(i)+ ".jpg"
             plt.savefig(input_img_name)
             plt.close(fig)
 
@@ -261,29 +286,31 @@ def main(argv):
                 plt.yticks([])
                 input_title = "n=" + str(m+1)
                 a.set_title(input_title, fontdict={'fontsize': fontsize})
-            input_img_name = "./output/pred" + str(i)+ ".jpg"
+            input_img_name = "./output/v1.0(0.2)/pred" + str(i)+ ".jpg"
             plt.savefig(input_img_name)
             plt.close(fig)
 
-            fig = plt.figure(figsize=(8, 1))
-            for m in range(SEQ_LEN):   
-                # display the mask of occupancy grids:
-                a = fig.add_subplot(1,10,m+1)
-                pred = prediction_maps_org[m]
-                input_grid = make_grid(pred.detach().cpu())
-                input_image = input_grid.permute(1, 2, 0)
-                plt.imshow(input_image)
-                plt.xticks([])
-                plt.yticks([])
-                input_title = "n=" + str(m+1)
-                a.set_title(input_title, fontdict={'fontsize': fontsize})
-            input_img_name = "./output/pred_org" + str(i)+ ".jpg"
-            plt.savefig(input_img_name)
-            plt.close(fig)
+            # fig = plt.figure(figsize=(8, 1))
+            # for m in range(SEQ_LEN):   
+            #     # display the mask of occupancy grids:
+            #     a = fig.add_subplot(1,10,m+1)
+            #     pred = prediction_maps_org[m]
+            #     input_grid = make_grid(pred.detach().cpu())
+            #     input_image = input_grid.permute(1, 2, 0)
+            #     plt.imshow(input_image)
+            #     plt.xticks([])
+            #     plt.yticks([])
+            #     input_title = "n=" + str(m+1)
+            #     a.set_title(input_title, fontdict={'fontsize': fontsize})
+            # input_img_name = "./output/pred_org" + str(i)+ ".jpg"
+            # plt.savefig(input_img_name)
+            # plt.close(fig)
 
             print(i)
-        
-    
+
+    df = pd.DataFrame(all_rows)
+    df.to_csv(csv_path, index=False)
+    print(f"Saved: {csv_path}")
     # exit gracefully
     #
     return True
