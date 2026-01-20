@@ -497,7 +497,7 @@ def main(argv):
         print('Validation set: Average loss: {:.4f}'.format(valid_epoch_loss))
         
         # save the model:
-        if(epoch % 10 == 0):
+        if((epoch+1) % 10 == 0):
             if torch.cuda.device_count() > 1: # multiple GPUS: 
                 state = {'model':model.module.state_dict(), 'optimizer':optimizer.state_dict(), 'epoch':epoch}
             else:

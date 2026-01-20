@@ -6,8 +6,12 @@ import matplotlib.pyplot as plt
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
 files = {
-    "OURS": os.path.join(ROOT, "output", "v1.0(0.2)", "eval_table.csv"),
-    "OURS w/ interpolation": os.path.join(ROOT, "output", "v1.1(0.2)", "eval_table.csv"),
+    #"OURS": os.path.join(ROOT, "output", "v1.0", "eval_table.csv"),
+    #"OURS w/ interpolation": os.path.join(ROOT, "output", "v1.1", "eval_table.csv"),
+    #"OURS v1.2(x2)": os.path.join(ROOT, "output", "v1.2_2", "eval_table.csv"),  
+    #"OURS v1.2(x5)": os.path.join(ROOT, "output", "v1.2_5", "eval_table.csv"),
+    "OURS v1.2": os.path.join(ROOT, "output", "v1.2", "eval_table.csv"),
+    "OURS v1.2(x3)": os.path.join(ROOT, "output", "v1.2_3", "eval_table.csv"),
     "SOGMP": os.path.join(ROOT, "output", "eval_table.csv"),
 }
 
@@ -34,7 +38,7 @@ plt.grid(True, linestyle="--", linewidth=0.5, alpha=0.6)
 plt.legend()
 plt.tight_layout()
 
-out_png = os.path.join(ROOT, "output", "iou_eval_plot_0.2.png")
+out_png = os.path.join(ROOT, "output", "iou_eval_plot_2_3.png")
 plt.savefig(out_png, dpi=300)
 plt.show()
 print("Saved:", out_png)

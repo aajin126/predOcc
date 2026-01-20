@@ -141,7 +141,7 @@ def main(argv):
     # for each batch in increments of batch size:
     counter = 0
     all_rows = []       
-    csv_path = os.path.join("output", "v1.0(0.2)", "eval_table.csv")
+    csv_path = os.path.join("output", "v1.2_2", "eval_table.csv")
     # get the number of batches (ceiling of train_data/batch_size):
     num_batches = int(len(eval_dataset)/eval_dataloader.batch_size)
     with torch.no_grad():
@@ -226,7 +226,7 @@ def main(argv):
 
             for k in range(SEQ_LEN):  
                 prediction, kl_loss = model(inputs_samples, inputs_occ_map_samples)
-                prediction_t, _ = transform_map(prediction, x_rel[:, k], y_rel[:, k], th_rel[:, k], MAP_X_LIMIT, MAP_Y_LIMIT)
+                prediction_t, _ = reprojection(prediction, x_rel[:, k], y_rel[:, k], th_rel[:, k], MAP_X_LIMIT, MAP_Y_LIMIT)
                 prediction = prediction.reshape(-1,1,1,IMG_SIZE,IMG_SIZE)
                 prediction_t = prediction_t.reshape(-1,1,1,IMG_SIZE,IMG_SIZE)
                 inputs_samples = torch.cat([inputs_samples[:,1:], prediction], dim=1)
@@ -270,7 +270,7 @@ def main(argv):
                 fontsize = 8
                 input_title = "n=" + str(m+1)
                 a.set_title(input_title, fontdict={'fontsize': fontsize})
-            input_img_name = "./output/v1.0(0.2)/mask" + str(i)+ ".jpg"
+            input_img_name = "./output/v1.2_2/mask" + str(i)+ ".jpg"
             plt.savefig(input_img_name)
             plt.close(fig)
 
@@ -286,7 +286,7 @@ def main(argv):
                 plt.yticks([])
                 input_title = "n=" + str(m+1)
                 a.set_title(input_title, fontdict={'fontsize': fontsize})
-            input_img_name = "./output/v1.0(0.2)/pred" + str(i)+ ".jpg"
+            input_img_name = "./output/v1.2_2/pred" + str(i)+ ".jpg"
             plt.savefig(input_img_name)
             plt.close(fig)
 
