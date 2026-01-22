@@ -33,6 +33,7 @@ import numpy as np
 from model import *
 from local_occ_grid_map import LocalMap
 from util import *
+from focal_loss import BinaryFocalLossWithLogits
 
 # import modules
 #
@@ -178,16 +179,17 @@ def train(model, dataloader, dataset, device, optimizer, criterion, epoch, epoch
         prediction, kl_loss = model(input_binary_maps, input_occ_grid_map)
 
         # warp the prediction(based on current frame) to the target frame(based on t+1 frame):
-        fin_pred_map, valid_mask = reprojection(prediction, x_rel[:,0], y_rel[:,0], th_rel[:,0], MAP_X_LIMIT, MAP_Y_LIMIT) 
+        fin_pred_map, valid_mask = reprojection_logits(prediction, x_rel[:,0], y_rel[:,0], th_rel[:,0], MAP_X_LIMIT, MAP_Y_LIMIT) 
         valid_mask = valid_mask.float()
+        pred_vis = torch.sigmoid(fin_pred_map) * valid_mask
 
         if i == 0:
-            n_show = min(4, fin_pred_map.size(0))
+            n_show = min(4, pred_vis.size(0))
             imgs = []
             for k in range(n_show):
                 gt = mask_binary_maps[k, 0, 0].float().detach().cpu().numpy()   # GT(t+1)
                 pred_t = prediction[k, 0].float().detach().cpu().numpy()        # pred(t)
-                warped = fin_pred_map[k, 0].float().detach().cpu().numpy()      # warped(t+1)
+                warped = pred_vis[k, 0].float().detach().cpu().numpy()      # warped(t+1)
                 vmask  = valid_mask[k, 0].float().detach().cpu().numpy()        # valid mask
 
                 to_u8 = lambda x: (np.clip(x, 0, 1) * 255).astype(np.uint8)
@@ -318,7 +320,7 @@ def validate(model, dataloader, dataset, device, criterion):
             prediction, kl_loss= model(input_binary_maps, input_occ_grid_map)
             
             # warp the prediction(based on current frame) to the target frame(based on t+1 frame):
-            fin_pred_map, valid_mask = reprojection(prediction, x_rel[:,0], y_rel[:,0], th_rel[:,0], MAP_X_LIMIT, MAP_Y_LIMIT) 
+            fin_pred_map, valid_mask = reprojection_logits(prediction, x_rel[:,0], y_rel[:,0], th_rel[:,0], MAP_X_LIMIT, MAP_Y_LIMIT) 
             valid_mask = valid_mask.float()
 
             # calculate the total loss:
@@ -420,7 +422,8 @@ def main(argv):
                    EPS: 1e-08,
                    WEIGHT_DECAY: .001 }
     # set the loss criterion and optimizer:
-    criterion = nn.BCELoss(reduction='sum') 
+    # criterion = nn.BCELoss(reduction='sum') 
+    criterion = BinaryFocalLossWithLogits(gamma=1.2, alpha=0.8, reduction="sum")
     criterion.to(device)
     # create an optimizer, and pass the model params to it:
     optimizer = Adam(model.parameters(), **opt_params)
@@ -497,7 +500,7 @@ def main(argv):
         print('Validation set: Average loss: {:.4f}'.format(valid_epoch_loss))
         
         # save the model:
-        if((epoch+1) % 10 == 0):
+        if (epoch+1) % 10 == 0:
             if torch.cuda.device_count() > 1: # multiple GPUS: 
                 state = {'model':model.module.state_dict(), 'optimizer':optimizer.state_dict(), 'epoch':epoch}
             else:
