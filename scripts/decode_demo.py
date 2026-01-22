@@ -45,9 +45,9 @@ import os
 
 # import the model and all of its variables/functions
 #
-from model import *
+from dataloader import *
 from local_occ_grid_map import LocalMap
-from util import *
+from reproj import *
 from eval import *
 
 #-----------------------------------------------------------------------------
@@ -114,7 +114,7 @@ def main(argv):
     # labels: [0, 0, 1, ...]
     #
     #[ped_pos_e, scan_e, goal_e, vel_e] = get_data(fname)
-    eval_dataset = VaeTestDataset(fImg,'test')
+    eval_dataset = TestDataset(fImg,'test')
     eval_dataloader = torch.utils.data.DataLoader(eval_dataset, batch_size=1, \
                                                    shuffle=False, drop_last=True) #, pin_memory=True)
 

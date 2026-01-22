@@ -30,9 +30,9 @@ import numpy as np
 
 # import the model and all of its variables/functions
 #
-from model import *
+from dataloader import *
 from local_occ_grid_map import LocalMap
-from util import *
+from reproj import *
 
 # import modules
 #
@@ -199,10 +199,7 @@ def train(model, dataloader, dataset, device, optimizer, criterion, epoch, epoch
             wandb.log({"viz/maps": imgs}, step=epoch)
 
         B, _, H, W = fin_pred_map.shape
-        # the number of valid pixels per sample:
-        #valid_sum = valid_mask.flatten(1).sum(1)
-        #valid_ratio = valid_sum.mean()/(H*W)
-        #print(f"Batch {i}: valid ratio: {valid_ratio:.4f}")
+
         # calculate the total loss:
         ce_loss = criterion(fin_pred_map, mask_binary_maps[:,0]).div(batch_size)
         # total loss:
@@ -210,6 +207,7 @@ def train(model, dataloader, dataset, device, optimizer, criterion, epoch, epoch
         # perform back propagation:
         loss.backward(torch.ones_like(loss))
         optimizer.step()
+        
         # get the loss:
         # multiple GPUs:
         if torch.cuda.device_count() > 1:
@@ -397,13 +395,13 @@ def main(argv):
 
     ### training data ###
     # training set and training data loader
-    train_dataset = VaeTestDataset(pTrain, 'train')
+    train_dataset = TestDataset(pTrain, 'train')
     train_dataloader = torch.utils.data.DataLoader(train_dataset, batch_size=BATCH_SIZE, num_workers=4, \
                                                    shuffle=True, drop_last=True, pin_memory=True)
 
     ### validation data ###
     # validation set and validation data loader
-    dev_dataset = VaeTestDataset(pDev, 'val')
+    dev_dataset = TestDataset(pDev, 'val')
     dev_dataloader = torch.utils.data.DataLoader(dev_dataset, batch_size=BATCH_SIZE, num_workers=2, \
                                                  shuffle=True, drop_last=True, pin_memory=True)
 
