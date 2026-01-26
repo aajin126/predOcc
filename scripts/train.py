@@ -27,7 +27,8 @@ import wandb
 # visualize:
 from tensorboardX import SummaryWriter
 import numpy as np
-
+import matplotlib.pyplot as plt
+from torchvision.utils import make_grid
 # import the model and all of its variables/functions
 #
 from model import *
@@ -50,6 +51,7 @@ import os
 #
 model_dir = './model/model.pth'  # the path of model storage 
 NUM_ARGS = 3
+IMG_SIZE = 64
 NUM_EPOCHS = 50 #100
 BATCH_SIZE = 128 #512 #64
 LEARNING_RATE = "lr"
@@ -62,6 +64,7 @@ NUM_INPUT_CHANNELS = 1
 NUM_LATENT_DIM = 512 # 16*16*2 
 NUM_OUTPUT_CHANNELS = 1
 BETA = 0.01
+GAMMA = 0.9
 
 # Init map parameters
 P_prior = 0.5	# Prior occupancy probability
@@ -102,6 +105,8 @@ def train(model, dataloader, dataset, device, optimizer, criterion, epoch, epoch
     kl_avg_loss = 0.0
     # CE loss:
     ce_avg_loss = 0.0
+    ce_loss = 0.0
+    w_sum = 0.0
 
     counter = 0
     # get the number of batches (ceiling of train_data/batch_size):
@@ -144,7 +149,10 @@ def train(model, dataloader, dataset, device, optimizer, criterion, epoch, epoch
         # calculate relative future positions to current position:
         future_poses = positions[:, SEQ_LEN:] 
         x_rel, y_rel, th_rel = mask_gridMap.robot_coordinate_transform(future_poses, obs_pos_N)
-        
+
+
+        prediction_maps = torch.zeros(batch_size, SEQ_LEN, 1, IMG_SIZE, IMG_SIZE).to(device)
+        prediction_maps_org = torch.zeros(batch_size, SEQ_LEN, 1, IMG_SIZE, IMG_SIZE).to(device)
         # Create input grid maps: 
         input_gridMap = LocalMap(X_lim = MAP_X_LIMIT, 
                     Y_lim = MAP_Y_LIMIT, 
@@ -172,39 +180,84 @@ def train(model, dataloader, dataset, device, optimizer, criterion, epoch, epoch
         input_binary_maps = input_binary_maps.unsqueeze(2)
         mask_binary_maps = mask_binary_maps.unsqueeze(2)
 
+        inputs_samples = input_binary_maps
+        inputs_occ_map_samples = input_occ_grid_map
+
         # set all gradients to 0:
         optimizer.zero_grad()
-        # feed the batch to the network:
-        prediction, kl_loss = model(input_binary_maps, input_occ_grid_map)
+        # # feed the batch to the network:
+        # prediction, kl_loss = model(input_binary_maps, input_occ_grid_map)
 
-        # warp the prediction(based on current frame) to the target frame(based on t+1 frame):
-        fin_pred_map, valid_mask = reprojection(prediction, x_rel[:,0], y_rel[:,0], th_rel[:,0], MAP_X_LIMIT, MAP_Y_LIMIT) 
-        valid_mask = valid_mask.float()
+        # # warp the prediction(based on current frame) to the target frame(based on t+1 frame):
+        # fin_pred_map, valid_mask = reprojection(prediction, x_rel[:,0], y_rel[:,0], th_rel[:,0], MAP_X_LIMIT, MAP_Y_LIMIT) 
+        # valid_mask = valid_mask.float()
+
+        for k in range(SEQ_LEN):  
+            prediction, kl_loss = model(inputs_samples, inputs_occ_map_samples)
+            prediction_t, _ = reprojection(prediction, x_rel[:, k], y_rel[:, k], th_rel[:, k], MAP_X_LIMIT, MAP_Y_LIMIT)
+            prediction = prediction.unsqueeze(1)
+            prediction_t = prediction_t.unsqueeze(1)
+            inputs_samples = torch.cat([inputs_samples[:,1:], prediction], dim=1)
+
+            prediction_maps[:, k] = prediction_t.squeeze(1)
+            prediction_maps_org[:, k] = prediction.squeeze(1)
+        
+        # calculate the total loss:
+        for k in range(SEQ_LEN):
+            w = (GAMMA ** k)
+
+            # pred/gt: [B,1,H,W]
+            pred_k = prediction_maps[:, k]
+            gt_k   = mask_binary_maps[:, k]
+
+            loss_k = criterion(pred_k, gt_k).div(batch_size)
+
+            ce_loss = ce_loss + w * loss_k
+            w_sum = w_sum + w
+        
+        ce_loss = ce_loss / w_sum
 
         if i == 0:
-            n_show = min(4, fin_pred_map.size(0))
-            imgs = []
-            for k in range(n_show):
-                gt = mask_binary_maps[k, 0, 0].float().detach().cpu().numpy()   # GT(t+1)
-                pred_t = prediction[k, 0].float().detach().cpu().numpy()        # pred(t)
-                warped = fin_pred_map[k, 0].float().detach().cpu().numpy()      # warped(t+1)
-                vmask  = valid_mask[k, 0].float().detach().cpu().numpy()        # valid mask
+            fig = plt.figure(figsize=(8, 1))
+            for m in range(SEQ_LEN):   
+                # display the mask of occupancy grids:
+                a = fig.add_subplot(1,10,m+1)
+                mask = mask_binary_maps[0, m]
+                input_grid = make_grid(mask.detach().cpu())
+                input_image = input_grid.permute(1, 2, 0)
+                plt.imshow(input_image)
+                plt.xticks([])
+                plt.yticks([])
+                fontsize = 8
+                input_title = "n=" + str(m+1)
+                a.set_title(input_title, fontdict={'fontsize': fontsize})
+            fig.tight_layout()
+            wandb.log({"viz/GT": wandb.Image(fig, caption=f"iter={i}")})
+            plt.close(fig)
 
-                to_u8 = lambda x: (np.clip(x, 0, 1) * 255).astype(np.uint8)
-                top = np.concatenate([to_u8(gt), to_u8(pred_t)], axis=1)
-                bot = np.concatenate([to_u8(warped), to_u8(vmask)], axis=1)
-                tile = np.concatenate([top, bot], axis=0)
+            fig = plt.figure(figsize=(8, 1))
+            for m in range(SEQ_LEN):   
+                # display the mask of occupancy grids:
+                a = fig.add_subplot(1,SEQ_LEN,m+1)
+                pred = prediction_maps[0,m]
+                input_grid = make_grid(pred.detach().cpu())
+                input_image = input_grid.permute(1, 2, 0)
+                plt.imshow(input_image)
+                plt.xticks([])
+                plt.yticks([])
+                input_title = "n=" + str(m+1)
+                a.set_title(input_title, fontdict={'fontsize': fontsize})
+            fig.tight_layout()
+            wandb.log({"viz/pred": wandb.Image(fig, caption=f"iter={i}")})
+            plt.close(fig)
 
-                imgs.append(wandb.Image(tile, caption=f"ep{epoch} idx{k} | TL:GT TR:pred(t) BL:warp BR:valid"))
-            wandb.log({"viz/maps": imgs}, step=epoch)
-
-        B, _, H, W = fin_pred_map.shape
-        # the number of valid pixels per sample:
-        #valid_sum = valid_mask.flatten(1).sum(1)
-        #valid_ratio = valid_sum.mean()/(H*W)
-        #print(f"Batch {i}: valid ratio: {valid_ratio:.4f}")
-        # calculate the total loss:
-        ce_loss = criterion(fin_pred_map, mask_binary_maps[:,0]).div(batch_size)
+        # B, _, H, W = fin_pred_map.shape
+        # # the number of valid pixels per sample:
+        # #valid_sum = valid_mask.flatten(1).sum(1)
+        # #valid_ratio = valid_sum.mean()/(H*W)
+        # #print(f"Batch {i}: valid ratio: {valid_ratio:.4f}")
+        # # calculate the total loss:
+        # ce_loss = criterion(fin_pred_map, mask_binary_maps[:,0]).div(batch_size)
         # total loss:
         loss = ce_loss + BETA*kl_loss
         # perform back propagation:
@@ -243,6 +296,8 @@ def validate(model, dataloader, dataset, device, criterion):
     kl_avg_loss = 0.0
     # CE loss:
     ce_avg_loss = 0.0
+    ce_loss = 0.0
+    w_sum = 0.0
 
     counter = 0
     # get the number of batches (ceiling of train_data/batch_size):
@@ -286,7 +341,10 @@ def validate(model, dataloader, dataset, device, criterion):
             # calculate relative future positions to current position:
             future_poses = positions[:, SEQ_LEN:] 
             x_rel, y_rel, th_rel = mask_gridMap.robot_coordinate_transform(future_poses, obs_pos_N)
-            
+
+            prediction_maps = torch.zeros(batch_size, SEQ_LEN, 1, IMG_SIZE, IMG_SIZE).to(device)
+            prediction_maps_org = torch.zeros(batch_size, SEQ_LEN, 1, IMG_SIZE, IMG_SIZE).to(device)
+
             # Create input grid maps: 
             input_gridMap = LocalMap(X_lim = MAP_X_LIMIT, 
                         Y_lim = MAP_Y_LIMIT, 
@@ -313,16 +371,42 @@ def validate(model, dataloader, dataset, device, criterion):
             # add channel dimension:
             input_binary_maps = input_binary_maps.unsqueeze(2)
             mask_binary_maps = mask_binary_maps.unsqueeze(2)
+            inputs_samples = input_binary_maps
+            inputs_occ_map_samples = input_occ_grid_map
+            for k in range(SEQ_LEN):  
+                prediction, kl_loss = model(inputs_samples, inputs_occ_map_samples)
+                prediction_t, _ = reprojection(prediction, x_rel[:, k], y_rel[:, k], th_rel[:, k], MAP_X_LIMIT, MAP_Y_LIMIT)
+                prediction = prediction.unsqueeze(1)
+                prediction_t = prediction_t.unsqueeze(1)
+                inputs_samples = torch.cat([inputs_samples[:,1:], prediction], dim=1)
 
-            # feed the batch to the network:
-            prediction, kl_loss= model(input_binary_maps, input_occ_grid_map)
+                prediction_maps[:, k] = prediction_t.squeeze(1)
+                prediction_maps_org[:, k] = prediction.squeeze(1)
             
-            # warp the prediction(based on current frame) to the target frame(based on t+1 frame):
-            fin_pred_map, valid_mask = reprojection(prediction, x_rel[:,0], y_rel[:,0], th_rel[:,0], MAP_X_LIMIT, MAP_Y_LIMIT) 
-            valid_mask = valid_mask.float()
-
             # calculate the total loss:
-            ce_loss = criterion(fin_pred_map, mask_binary_maps[:,0]).div(batch_size)
+            for k in range(SEQ_LEN):
+                w = (GAMMA ** k)
+
+                # pred/gt: [B,1,H,W]
+                pred_k = prediction_maps[:, k]
+                gt_k   = mask_binary_maps[:, k]
+
+                loss_k = criterion(pred_k, gt_k).div(batch_size)
+
+                ce_loss = ce_loss + w * loss_k
+                w_sum = w_sum + w
+            
+            ce_loss = ce_loss / w_sum
+
+            # # feed the batch to the network:
+            # prediction, kl_loss= model(input_binary_maps, input_occ_grid_map)
+            
+            # # warp the prediction(based on current frame) to the target frame(based on t+1 frame):
+            # fin_pred_map, valid_mask = reprojection(prediction, x_rel[:,0], y_rel[:,0], th_rel[:,0], MAP_X_LIMIT, MAP_Y_LIMIT) 
+            # valid_mask = valid_mask.float()
+
+            # # calculate the total loss:
+            # ce_loss = criterion(fin_pred_map, mask_binary_maps[:,0]).div(batch_size)
             # total loss:
             loss = ce_loss + BETA*kl_loss
 
