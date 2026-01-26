@@ -450,6 +450,15 @@ def main(argv):
     # tensorboard writer:
     writer = SummaryWriter('runs')
 
+    # ---------------- BEST checkpoint tracking ----------------
+    best_val_loss = float("inf")
+    best_train_loss = float("inf")
+    best_val_epoch = -1
+    best_train_epoch = -1
+
+    best_val_path = os.path.join(odir, "best_val.pth")
+    best_train_path = os.path.join(odir, "best_train.pth")
+
     epoch_num = 0
     for epoch in range(start_epoch+1, epochs):
         # adjust learning rate:
@@ -513,7 +522,52 @@ def main(argv):
             )
             artifact.add_file(path)
             wandb.log_artifact(artifact)
+        
+        if torch.cuda.device_count() > 1:
+            best_state = {
+                "model": model.module.state_dict(),
+                "optimizer": optimizer.state_dict(),
+                "epoch": epoch,
+                "train_loss": float(train_epoch_loss),
+                "val_loss": float(valid_epoch_loss),
+            }
+        else:
+            best_state = {
+                "model": model.state_dict(),
+                "optimizer": optimizer.state_dict(),
+                "epoch": epoch,
+                "train_loss": float(train_epoch_loss),
+                "val_loss": float(valid_epoch_loss),
+            }
 
+        # best by val loss
+        if valid_epoch_loss < best_val_loss:
+            best_val_loss = float(valid_epoch_loss)
+            best_val_epoch = int(epoch)
+            torch.save(best_state, best_val_path)
+
+            artifact = wandb.Artifact(
+                name=f"predOcc-best-val-{os.path.basename(mdl_path)}",
+                type="checkpoint",
+                metadata={"best_epoch": best_val_epoch, "best_val_loss": best_val_loss, "lr": optimizer.param_groups[0]["lr"]},
+            )
+            artifact.add_file(best_val_path)
+            wandb.log_artifact(artifact)
+
+        # best by train loss
+        if train_epoch_loss < best_train_loss:
+            best_train_loss = float(train_epoch_loss)
+            best_train_epoch = int(epoch)
+            torch.save(best_state, best_train_path)
+
+            artifact = wandb.Artifact(
+                name=f"predOcc-best-train-{os.path.basename(mdl_path)}",
+                type="checkpoint",
+                metadata={"best_epoch": best_train_epoch, "best_train_loss": best_train_loss, "lr": optimizer.param_groups[0]["lr"]},
+            )
+            artifact.add_file(best_train_path)
+            wandb.log_artifact(artifact)
+        # -------------------------------
         epoch_num = epoch
 
     # save the final model
