@@ -105,8 +105,6 @@ def train(model, dataloader, dataset, device, optimizer, criterion, epoch, epoch
     kl_avg_loss = 0.0
     # CE loss:
     ce_avg_loss = 0.0
-    ce_loss = 0.0
-    w_sum = 0.0
 
     counter = 0
     # get the number of batches (ceiling of train_data/batch_size):
@@ -201,7 +199,9 @@ def train(model, dataloader, dataset, device, optimizer, criterion, epoch, epoch
 
             prediction_maps[:, k] = prediction_t.squeeze(1)
             prediction_maps_org[:, k] = prediction.squeeze(1)
-        
+
+        ce_loss = 0.0
+        w_sum = 0.0        
         # calculate the total loss:
         for k in range(SEQ_LEN):
             w = (GAMMA ** k)
@@ -296,8 +296,6 @@ def validate(model, dataloader, dataset, device, criterion):
     kl_avg_loss = 0.0
     # CE loss:
     ce_avg_loss = 0.0
-    ce_loss = 0.0
-    w_sum = 0.0
 
     counter = 0
     # get the number of batches (ceiling of train_data/batch_size):
@@ -382,7 +380,9 @@ def validate(model, dataloader, dataset, device, criterion):
 
                 prediction_maps[:, k] = prediction_t.squeeze(1)
                 prediction_maps_org[:, k] = prediction.squeeze(1)
-            
+
+            ce_loss = 0.0
+            w_sum = 0.0        
             # calculate the total loss:
             for k in range(SEQ_LEN):
                 w = (GAMMA ** k)
