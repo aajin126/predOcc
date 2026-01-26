@@ -227,7 +227,9 @@ def main(argv):
             for k in range(SEQ_LEN):  
                 prediction, kl_loss = model(inputs_samples, inputs_occ_map_samples)
                 prediction_t, valid_mask = reprojection_logits(prediction, x_rel[:, k], y_rel[:, k], th_rel[:, k], MAP_X_LIMIT, MAP_Y_LIMIT)
+                prediction = torch.sigmoid(prediction) 
                 prediction = prediction.reshape(-1,1,1,IMG_SIZE,IMG_SIZE)
+                prediction_t = torch.sigmoid(prediction_t)* valid_mask[0]
                 prediction_t = prediction_t.reshape(-1,1,1,IMG_SIZE,IMG_SIZE)
                 inputs_samples = torch.cat([inputs_samples[:,1:], prediction], dim=1)
 
@@ -235,11 +237,9 @@ def main(argv):
                 predictions_origin = prediction.squeeze(1)
 
                 pred_mean = torch.mean(predictions, dim=0, keepdim=True)
-                pred_mean = torch.sigmoid(pred_mean) * valid_mask[0]
                 prediction_maps[k, 0] = pred_mean.squeeze()
 
                 pred_mean_origin = torch.mean(predictions_origin, dim=0, keepdim=True)
-                pred_mean_origin = torch.sigmoid(pred_mean_origin)
                 prediction_maps_org[k, 0] = pred_mean_origin.squeeze()
 
             # end timing
