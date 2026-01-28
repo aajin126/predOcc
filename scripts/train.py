@@ -334,7 +334,7 @@ def validate(model, dataloader, dataset, device, criterion):
             mask_binary_maps = mask_binary_maps.unsqueeze(2)
 
             # feed the batch to the network:
-            prediction, kl_loss= model(input_binary_maps, input_occ_grid_map)
+            prediction, kl_loss = model(input_binary_maps, input_occ_grid_map)
 
             # calculate the total loss:
             ce_loss = criterion(prediction, mask_binary_maps[:,0]).div(batch_size)
