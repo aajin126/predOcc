@@ -196,33 +196,34 @@ def train(model, dataloader, dataset, device, optimizer, criterion, epoch, epoch
         # perform back propagation:
         loss.backward(torch.ones_like(loss))
         optimizer.step()
+        
+        if i == 0:
+            fig = plt.figure(figsize=(4, 2))
 
-        fig = plt.figure(figsize=(4, 2))
+            # --- Left: Ground Truth ---
+            ax1 = fig.add_subplot(1, 2, 1)
+            grid_gt = make_grid(mask_binary_maps[0, 0, 0].detach().cpu())
+            img_gt = grid_gt.permute(1, 2, 0)
+            ax1.imshow(img_gt)
+            ax1.set_xticks([])
+            ax1.set_yticks([])
+            ax1.set_title("GT", fontsize=8)
 
-        # --- Left: Ground Truth ---
-        ax1 = fig.add_subplot(1, 2, 1)
-        grid_gt = make_grid(mask_binary_maps[0, 0, 0].detach().cpu())
-        img_gt = grid_gt.permute(1, 2, 0)
-        ax1.imshow(img_gt)
-        ax1.set_xticks([])
-        ax1.set_yticks([])
-        ax1.set_title("GT", fontsize=8)
+            # --- Right: Prediction ---
+            ax2 = fig.add_subplot(1, 2, 2)
+            grid_pred = make_grid(prediction[0, 0].detach().cpu())
+            img_pred = grid_pred.permute(1, 2, 0)
+            ax2.imshow(img_pred)
+            ax2.set_xticks([])
+            ax2.set_yticks([])
+            ax2.set_title("Prediction", fontsize=8)
 
-        # --- Right: Prediction ---
-        ax2 = fig.add_subplot(1, 2, 2)
-        grid_pred = make_grid(prediction[0, 0].detach().cpu())
-        img_pred = grid_pred.permute(1, 2, 0)
-        ax2.imshow(img_pred)
-        ax2.set_xticks([])
-        ax2.set_yticks([])
-        ax2.set_title("Prediction", fontsize=8)
+            fig.tight_layout()
 
-        fig.tight_layout()
-
-        wandb.log({
-            "viz/gt|pred": wandb.Image(fig, caption=f"iter={i}")
-        })
-        plt.close(fig)
+            wandb.log({
+                "viz/gt|pred": wandb.Image(fig, caption=f"iter={i}")
+            })
+            plt.close(fig)
 
         # get the loss:
         # multiple GPUs:
