@@ -18,6 +18,8 @@
 
 # import pytorch modules
 #
+import matplotlib
+matplotlib.use("Agg") 
 import torch
 import torch.nn as nn
 from torch.optim import Adam
