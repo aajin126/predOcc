@@ -55,7 +55,7 @@ import os
 model_dir = './model/model.pth'  # the path of model storage 
 NUM_ARGS = 3
 NUM_EPOCHS = 100
-BATCH_SIZE = 64 #128 #512 #64
+BATCH_SIZE = 128 #512 #64
 LEARNING_RATE = "lr"
 BETAS = "betas"
 EPS = "eps"
@@ -65,7 +65,7 @@ WEIGHT_DECAY = "weight_decay"
 NUM_INPUT_CHANNELS = 1
 NUM_LATENT_DIM = 512 # 16*16*2 
 NUM_OUTPUT_CHANNELS = 1
-BETA = 0.01
+BETA = 0.1
 
 # Init map parameters
 P_prior = 0.5	# Prior occupancy probability
@@ -188,10 +188,19 @@ def train(model, dataloader, dataset, device, optimizer, criterion, epoch, epoch
         # feed the batch to the network:
         prediction, kl_loss = model(input_binary_maps, input_occ_grid_map)
 
-        # calculate the total loss:
-        ce_loss = criterion(prediction, mask_binary_maps[:,0]).div(batch_size)
-        # total loss:
-        loss = ce_loss + BETA*kl_loss
+        end_w = 0.2  # end frame weight
+        w = torch.linspace(1.0, end_w, steps=SEQ_LEN, device=prediction.device)  # (SEQ_LEN,)
+
+        ce_loss = 0.0
+        w_sum = 0.0
+        for k in range(SEQ_LEN):
+            w_k = w[k]
+            ce_loss = ce_loss + w_k * criterion(prediction[:, k], mask_binary_maps[:, k]).div(batch_size)
+            w_sum = w_sum + w_k
+
+        ce_loss = ce_loss / w_sum
+
+        loss = ce_loss + BETA * kl_loss
         # perform back propagation:
         loss.backward(torch.ones_like(loss))
         optimizer.step()

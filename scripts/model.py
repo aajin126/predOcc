@@ -343,7 +343,12 @@ class RVAEP(nn.Module):
                                 num_hiddens, 
                                 num_residual_layers, 
                                 num_residual_hiddens)
-        
+        self.pred_len = SEQ_LEN
+        self._decoder = Decoder(self.output_channels * self.pred_len,
+                                num_hiddens,
+                                num_residual_layers,
+                                num_residual_hiddens)
+
 
     def vae_reparameterize(self, z_mu, z_log_sd):
         """
@@ -401,6 +406,7 @@ class RVAEP(nn.Module):
         z = z.reshape(-1, 2, self.z_w, self.z_w)
         x_d = self._decoder_z_mu(z)
         prediction = self._decoder(x_d)
+        prediction = prediction.view(b, SEQ_LEN, self.output_channels, IMG_SIZE, IMG_SIZE)
 
         return prediction, kl_loss
 
