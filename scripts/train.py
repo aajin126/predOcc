@@ -27,6 +27,8 @@ import wandb
 # visualize:
 from tensorboardX import SummaryWriter
 import numpy as np
+import matplotlib.pyplot as plt
+from torchvision.utils import make_grid
 
 # import the model and all of its variables/functions
 #
@@ -51,7 +53,7 @@ import os
 model_dir = './model/model.pth'  # the path of model storage 
 NUM_ARGS = 3
 NUM_EPOCHS = 100
-BATCH_SIZE = 32 #128 #512 #64
+BATCH_SIZE = 64 #128 #512 #64
 LEARNING_RATE = "lr"
 BETAS = "betas"
 EPS = "eps"
@@ -127,23 +129,27 @@ def train(model, dataloader, dataset, device, optimizer, criterion, epoch, epoch
                         p = P_prior,
                         size=[batch_size, SEQ_LEN],
                         device = device)
-        # robot positions:
-        x_odom = torch.zeros(batch_size, SEQ_LEN).to(device)
-        y_odom = torch.zeros(batch_size, SEQ_LEN).to(device)
-        theta_odom = torch.zeros(batch_size, SEQ_LEN).to(device)
-        # Lidar measurements:
-        distances = scans[:,SEQ_LEN:] # get future 10 frames
-        # the angles of lidar scan: -135 ~ 135 degree
-        angles = torch.linspace(-(135*np.pi/180), 135*np.pi/180, distances.shape[-1]).to(device)
-        # Lidar measurements in X-Y plane: transform to the predicted robot reference frame
-        distances_x, distances_y = mask_gridMap.lidar_scan_xy(distances, angles, x_odom, y_odom, theta_odom)
-        # discretize to binary maps:
-        mask_binary_maps = mask_gridMap.discretize(distances_x, distances_y)
         # current position:
         obs_pos_N = positions[:, SEQ_LEN-1]
-        # calculate relative future positions to current position:
+        # robot positions:
         future_poses = positions[:, SEQ_LEN:] 
-        x_rel, y_rel, th_rel = mask_gridMap.robot_coordinate_transform(future_poses, obs_pos_N)
+
+        x_future_odom = torch.zeros(batch_size, SEQ_LEN).to(device)
+        y_future_odom = torch.zeros(batch_size, SEQ_LEN).to(device)
+        theta_future_odom = torch.zeros(batch_size, SEQ_LEN).to(device)
+        # Transform the robot future poses to the reference frame.
+        x_future_odom, y_future_odom, theta_future_odom =  mask_gridMap.robot_coordinate_transform(future_poses, obs_pos_N)
+        # Lidar measurements:
+        future_distances = scans[:,SEQ_LEN:] # get future 10 frames
+        # the angles of lidar scan: -135 ~ 135 degree
+        future_angles = torch.linspace(-(135*np.pi/180), 135*np.pi/180, future_distances.shape[-1]).to(device)
+        # Lidar measurements in X-Y plane: transform to the predicted robot reference frame
+        future_distances_x, future_distances_y = mask_gridMap.lidar_scan_xy(future_distances, future_angles, x_future_odom, y_future_odom, theta_future_odom)
+        # discretize to binary maps:
+        mask_binary_maps = mask_gridMap.discretize(future_distances_x, future_distances_y)
+
+        # calculate relative future positions to current position: 
+        # x_rel, y_rel, th_rel = mask_gridMap.robot_coordinate_transform(future_poses, obs_pos_N)
         
         # Create input grid maps: 
         input_gridMap = LocalMap(X_lim = MAP_X_LIMIT, 
@@ -152,9 +158,12 @@ def train(model, dataloader, dataset, device, optimizer, criterion, epoch, epoch
                     p = P_prior,
                     size=[batch_size, SEQ_LEN],
                     device = device)
+        x_odom = torch.zeros(batch_size, SEQ_LEN).to(device)
+        y_odom = torch.zeros(batch_size, SEQ_LEN).to(device)
+        theta_odom = torch.zeros(batch_size, SEQ_LEN).to(device)
         # robot positions:
         pos = positions[:,:SEQ_LEN]
-        # Transform the robot past poses to the predicted reference frame.
+        # Transform the robot past poses to the reference frame.
         x_odom, y_odom, theta_odom =  input_gridMap.robot_coordinate_transform(pos, obs_pos_N)
         # Lidar measurements:
         distances = scans[:,:SEQ_LEN]
@@ -177,39 +186,41 @@ def train(model, dataloader, dataset, device, optimizer, criterion, epoch, epoch
         # feed the batch to the network:
         prediction, kl_loss = model(input_binary_maps, input_occ_grid_map)
 
-        # warp the prediction(based on current frame) to the target frame(based on t+1 frame):
-        fin_pred_map, valid_mask = reprojection(prediction, x_rel[:,0], y_rel[:,0], th_rel[:,0], MAP_X_LIMIT, MAP_Y_LIMIT) 
-        valid_mask = valid_mask.float()
-
-        if i == 0:
-            n_show = min(4, fin_pred_map.size(0))
-            imgs = []
-            for k in range(n_show):
-                gt = mask_binary_maps[k, 0, 0].float().detach().cpu().numpy()   # GT(t+1)
-                pred_t = prediction[k, 0].float().detach().cpu().numpy()        # pred(t)
-                warped = fin_pred_map[k, 0].float().detach().cpu().numpy()      # warped(t+1)
-                vmask  = valid_mask[k, 0].float().detach().cpu().numpy()        # valid mask
-
-                to_u8 = lambda x: (np.clip(x, 0, 1) * 255).astype(np.uint8)
-                top = np.concatenate([to_u8(gt), to_u8(pred_t)], axis=1)
-                bot = np.concatenate([to_u8(warped), to_u8(vmask)], axis=1)
-                tile = np.concatenate([top, bot], axis=0)
-
-                imgs.append(wandb.Image(tile, caption=f"ep{epoch} idx{k} | TL:GT TR:pred(t) BL:warp BR:valid"))
-            wandb.log({"viz/maps": imgs}, step=epoch)
-
-        B, _, H, W = fin_pred_map.shape
-        # the number of valid pixels per sample:
-        #valid_sum = valid_mask.flatten(1).sum(1)
-        #valid_ratio = valid_sum.mean()/(H*W)
-        #print(f"Batch {i}: valid ratio: {valid_ratio:.4f}")
         # calculate the total loss:
-        ce_loss = criterion(fin_pred_map, mask_binary_maps[:,0]).div(batch_size)
+        ce_loss = criterion(prediction, mask_binary_maps[:,0]).div(batch_size)
         # total loss:
         loss = ce_loss + BETA*kl_loss
         # perform back propagation:
         loss.backward(torch.ones_like(loss))
         optimizer.step()
+
+        fig = plt.figure(figsize=(4, 2))
+
+        # --- Left: Ground Truth ---
+        ax1 = fig.add_subplot(1, 2, 1)
+        grid_gt = make_grid(mask_binary_maps[0, 0, 0].detach().cpu())
+        img_gt = grid_gt.permute(1, 2, 0)
+        ax1.imshow(img_gt)
+        ax1.set_xticks([])
+        ax1.set_yticks([])
+        ax1.set_title("GT", fontsize=8)
+
+        # --- Right: Prediction ---
+        ax2 = fig.add_subplot(1, 2, 2)
+        grid_pred = make_grid(prediction[0, 0].detach().cpu())
+        img_pred = grid_pred.permute(1, 2, 0)
+        ax2.imshow(img_pred)
+        ax2.set_xticks([])
+        ax2.set_yticks([])
+        ax2.set_title("Prediction", fontsize=8)
+
+        fig.tight_layout()
+
+        wandb.log({
+            "viz/gt|pred": wandb.Image(fig, caption=f"iter={i}")
+        })
+        plt.close(fig)
+
         # get the loss:
         # multiple GPUs:
         if torch.cuda.device_count() > 1:
@@ -269,23 +280,27 @@ def validate(model, dataloader, dataset, device, criterion):
                             p = P_prior,
                             size=[batch_size, SEQ_LEN],
                             device = device)
-            # robot positions:
-            x_odom = torch.zeros(batch_size, SEQ_LEN).to(device)
-            y_odom = torch.zeros(batch_size, SEQ_LEN).to(device)
-            theta_odom = torch.zeros(batch_size, SEQ_LEN).to(device)
-            # Lidar measurements:
-            distances = scans[:,SEQ_LEN:]
-            # the angles of lidar scan: -135 ~ 135 degree
-            angles = torch.linspace(-(135*np.pi/180), 135*np.pi/180, distances.shape[-1]).to(device)
-            # Lidar measurements in X-Y plane: transform to the predicted robot reference frame
-            distances_x, distances_y = mask_gridMap.lidar_scan_xy(distances, angles, x_odom, y_odom, theta_odom)
-            # discretize to binary maps:
-            mask_binary_maps = mask_gridMap.discretize(distances_x, distances_y)
             # current position:
             obs_pos_N = positions[:, SEQ_LEN-1]
-            # calculate relative future positions to current position:
+            # robot positions:
             future_poses = positions[:, SEQ_LEN:] 
-            x_rel, y_rel, th_rel = mask_gridMap.robot_coordinate_transform(future_poses, obs_pos_N)
+
+            x_future_odom = torch.zeros(batch_size, SEQ_LEN).to(device)
+            y_future_odom = torch.zeros(batch_size, SEQ_LEN).to(device)
+            theta_future_odom = torch.zeros(batch_size, SEQ_LEN).to(device)
+            # Transform the robot future poses to the reference frame.
+            x_future_odom, y_future_odom, theta_future_odom =  mask_gridMap.robot_coordinate_transform(future_poses, obs_pos_N)
+            # Lidar measurements:
+            future_distances = scans[:,SEQ_LEN:] # get future 10 frames
+            # the angles of lidar scan: -135 ~ 135 degree
+            future_angles = torch.linspace(-(135*np.pi/180), 135*np.pi/180, future_distances.shape[-1]).to(device)
+            # Lidar measurements in X-Y plane: transform to the predicted robot reference frame
+            future_distances_x, future_distances_y = mask_gridMap.lidar_scan_xy(future_distances, future_angles, x_future_odom, y_future_odom, theta_future_odom)
+            # discretize to binary maps:
+            mask_binary_maps = mask_gridMap.discretize(future_distances_x, future_distances_y)
+
+            # calculate relative future positions to current position: 
+            # x_rel, y_rel, th_rel = mask_gridMap.robot_coordinate_transform(future_poses, obs_pos_N)
             
             # Create input grid maps: 
             input_gridMap = LocalMap(X_lim = MAP_X_LIMIT, 
@@ -294,9 +309,12 @@ def validate(model, dataloader, dataset, device, criterion):
                         p = P_prior,
                         size=[batch_size, SEQ_LEN],
                         device = device)
+            x_odom = torch.zeros(batch_size, SEQ_LEN).to(device)
+            y_odom = torch.zeros(batch_size, SEQ_LEN).to(device)
+            theta_odom = torch.zeros(batch_size, SEQ_LEN).to(device)
             # robot positions:
             pos = positions[:,:SEQ_LEN]
-            # Transform the robot past poses to the predicted reference frame.
+            # Transform the robot past poses to the reference frame.
             x_odom, y_odom, theta_odom =  input_gridMap.robot_coordinate_transform(pos, obs_pos_N)
             # Lidar measurements:
             distances = scans[:,:SEQ_LEN]
@@ -316,13 +334,9 @@ def validate(model, dataloader, dataset, device, criterion):
 
             # feed the batch to the network:
             prediction, kl_loss= model(input_binary_maps, input_occ_grid_map)
-            
-            # warp the prediction(based on current frame) to the target frame(based on t+1 frame):
-            fin_pred_map, valid_mask = reprojection(prediction, x_rel[:,0], y_rel[:,0], th_rel[:,0], MAP_X_LIMIT, MAP_Y_LIMIT) 
-            valid_mask = valid_mask.float()
 
             # calculate the total loss:
-            ce_loss = criterion(fin_pred_map, mask_binary_maps[:,0]).div(batch_size)
+            ce_loss = criterion(prediction, mask_binary_maps[:,0]).div(batch_size)
             # total loss:
             loss = ce_loss + BETA*kl_loss
 
