@@ -56,7 +56,7 @@ def reprojection(source_map, dx, dy, dtheta, x_lim, y_lim):
 
     # 5) bilinear warp in logit space, then sigmoid back to prob
     warped_logit = F.grid_sample(source_logit, grid, mode="bilinear", padding_mode="zeros", align_corners=False)
-    warped_prob = torch.sigmoid(warped_logit/0.2)
+    warped_prob = torch.sigmoid(warped_logit)
 
     warped_prob = warped_prob * valid_mask
 
