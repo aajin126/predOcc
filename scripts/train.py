@@ -156,9 +156,6 @@ def train(model, dataloader, dataset, device, optimizer, criterion, epoch, epoch
                     p = P_prior,
                     size=[batch_size, SEQ_LEN],
                     device = device)
-        x_odom = torch.zeros(batch_size, SEQ_LEN).to(device)
-        y_odom = torch.zeros(batch_size, SEQ_LEN).to(device)
-        theta_odom = torch.zeros(batch_size, SEQ_LEN).to(device)
         # robot positions:
         pos = positions[:,:SEQ_LEN]
         # Transform the robot past poses to the reference frame.
@@ -314,9 +311,6 @@ def validate(model, dataloader, dataset, device, criterion):
                         p = P_prior,
                         size=[batch_size, SEQ_LEN],
                         device = device)
-            x_odom = torch.zeros(batch_size, SEQ_LEN).to(device)
-            y_odom = torch.zeros(batch_size, SEQ_LEN).to(device)
-            theta_odom = torch.zeros(batch_size, SEQ_LEN).to(device)
             # robot positions:
             pos = positions[:,:SEQ_LEN]
             # Transform the robot past poses to the reference frame.
