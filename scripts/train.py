@@ -19,6 +19,8 @@
 # import pytorch modules
 #
 import matplotlib
+
+from scripts.model import SEQ_LEN
 matplotlib.use("Agg") 
 import torch
 import torch.nn as nn
@@ -188,7 +190,9 @@ def train(model, dataloader, dataset, device, optimizer, criterion, epoch, epoch
         ce_loss = 0.0
         w_sum = 0.0
         for k in range(SEQ_LEN):
-            prediction_rep, _ = reprojection(prediction[:, k], x_rel[:, k], y_rel[:, k], th_rel[:, k], MAP_X_LIMIT, MAP_Y_LIMIT)
+            prediction_rep, valid_mask = reprojection_logits(prediction[:, k], x_rel[:, k], y_rel[:, k], th_rel[:, k], MAP_X_LIMIT, MAP_Y_LIMIT)
+            valid_mask = valid_mask.float()
+            prediction_rep = torch.sigmoid(prediction_rep) * valid_mask
             w_k = w[k]
             ce_loss = ce_loss + w_k * criterion(prediction_rep, mask_binary_maps[:, k]).div(batch_size)
             w_sum = w_sum + w_k
@@ -340,8 +344,11 @@ def validate(model, dataloader, dataset, device, criterion):
 
             ce_loss = 0.0
             w_sum = 0.0
+            
             for k in range(SEQ_LEN):
-                prediction_rep, _ = reprojection(prediction[:, k], x_rel[:, k], y_rel[:, k], th_rel[:, k], MAP_X_LIMIT, MAP_Y_LIMIT)
+                prediction_rep, valid_mask = reprojection_logits(prediction[:, k], x_rel[:, k], y_rel[:, k], th_rel[:, k], MAP_X_LIMIT, MAP_Y_LIMIT)
+                valid_mask = valid_mask.float()
+                prediction_rep = torch.sigmoid(prediction_rep) * valid_mask
                 w_k = w[k]
                 ce_loss = ce_loss + w_k * criterion(prediction_rep, mask_binary_maps[:, k]).div(batch_size)
                 w_sum = w_sum + w_k
