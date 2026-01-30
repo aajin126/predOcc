@@ -37,6 +37,7 @@ from torchvision.utils import make_grid
 from model import *
 from local_occ_grid_map import LocalMap
 from util import *
+from focal_loss import *
 
 # import modules
 #
@@ -442,7 +443,7 @@ def main(argv):
                    EPS: 1e-08,
                    WEIGHT_DECAY: .001 }
     # set the loss criterion and optimizer:
-    criterion = nn.BCELoss(reduction='sum') 
+    criterion = BinaryFocalLossWithLogits(gamma=1.2, alpha=0.8, reduction="sum")
     criterion.to(device)
     # create an optimizer, and pass the model params to it:
     optimizer = Adam(model.parameters(), **opt_params)
