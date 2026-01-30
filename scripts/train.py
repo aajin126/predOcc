@@ -158,13 +158,13 @@ def train(model, dataloader, dataset, device, optimizer, criterion, epoch, epoch
                     device = device)
         # robot positions:
         pos = positions[:,:SEQ_LEN]
-        # Transform the robot past poses to the reference frame.
+        
         x_odom, y_odom, theta_odom =  input_gridMap.robot_coordinate_transform(pos, obs_pos_N)
         # Lidar measurements:
         distances = scans[:,:SEQ_LEN]
         # the angles of lidar scan: -135 ~ 135 degree
         angles = torch.linspace(-(135*np.pi/180), 135*np.pi/180, distances.shape[-1]).to(device)
-        # Lidar measurements in X-Y plane: transform to the predicted robot reference frame
+        # Lidar measurements in X-Y plane: transform to the robot reference frame
         distances_x, distances_y = input_gridMap.lidar_scan_xy(distances, angles, x_odom, y_odom, theta_odom)
         # discretize to binary maps:
         input_binary_maps = input_gridMap.discretize(distances_x, distances_y)
