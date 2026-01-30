@@ -66,7 +66,7 @@ WEIGHT_DECAY = "weight_decay"
 NUM_INPUT_CHANNELS = 1
 NUM_LATENT_DIM = 512 # 16*16*2 
 NUM_OUTPUT_CHANNELS = 1
-BETA = 0.1
+BETA = 0.01
 
 # Init map parameters
 P_prior = 0.5	# Prior occupancy probability
@@ -207,37 +207,31 @@ def train(model, dataloader, dataset, device, optimizer, criterion, epoch, epoch
         optimizer.step()
 
         if i == 0:
-            fig = plt.figure(figsize=(8, 1))
-            for m in range(SEQ_LEN):   
-                # display the mask of occupancy grids:
-                a = fig.add_subplot(1,10,m+1)
-                mask = mask_binary_maps[0, m]
-                input_grid = make_grid(mask.detach().cpu())
-                input_image = input_grid.permute(1, 2, 0)
-                plt.imshow(input_image)
-                plt.xticks([])
-                plt.yticks([])
-                fontsize = 8
-                input_title = "n=" + str(m+1)
-                a.set_title(input_title, fontdict={'fontsize': fontsize})
-            fig.tight_layout()
-            wandb.log({"viz/GT": wandb.Image(fig, caption=f"iter={i}")})
-            plt.close(fig)
+            fontsize = 8
+            fig = plt.figure(figsize=(8, 2)) 
 
-            fig = plt.figure(figsize=(8, 1))
-            for m in range(SEQ_LEN):   
-                # display the mask of occupancy grids:
-                a = fig.add_subplot(1,SEQ_LEN,m+1)
-                pred = prediction[0,m]
-                input_grid = make_grid(pred.detach().cpu())
-                input_image = input_grid.permute(1, 2, 0)
-                plt.imshow(input_image)
-                plt.xticks([])
-                plt.yticks([])
-                input_title = "n=" + str(m+1)
-                a.set_title(input_title, fontdict={'fontsize': fontsize})
+            for m in range(SEQ_LEN):
+                # --- Row 1: GT ---
+                ax1 = fig.add_subplot(2, SEQ_LEN, m + 1)
+                gt = mask_binary_maps[0, m]              # (1, H, W) or (H, W)
+                img_gt = make_grid(gt.detach().cpu()).permute(1, 2, 0)
+                ax1.imshow(img_gt)
+                ax1.set_xticks([]); ax1.set_yticks([])
+                if m == 0:
+                    ax1.set_ylabel("GT", fontsize=fontsize)
+                ax1.set_title(f"n={m+1}", fontdict={'fontsize': fontsize})
+
+                # --- Row 2: Pred ---
+                ax2 = fig.add_subplot(2, SEQ_LEN, SEQ_LEN + m + 1)
+                pred = prediction[0, m]
+                img_pred = make_grid(pred.detach().cpu()).permute(1, 2, 0)
+                ax2.imshow(img_pred)
+                ax2.set_xticks([]); ax2.set_yticks([])
+                if m == 0:
+                    ax2.set_ylabel("Pred", fontsize=fontsize)
+
             fig.tight_layout()
-            wandb.log({"viz/pred": wandb.Image(fig, caption=f"iter={i}")})
+            wandb.log({"viz/GT_pred": wandb.Image(fig, caption=f"iter={i}")})
             plt.close(fig)
 
         # get the loss:
