@@ -339,10 +339,6 @@ class RVAEP(nn.Module):
                                     out_channels=num_hiddens,
                                     kernel_size=1, 
                                     stride=1)
-        self._decoder = Decoder(self.output_channels,
-                                num_hiddens, 
-                                num_residual_layers, 
-                                num_residual_hiddens)
         self.pred_len = SEQ_LEN
         self._decoder = Decoder(self.output_channels * self.pred_len,
                                 num_hiddens,

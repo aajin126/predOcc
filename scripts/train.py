@@ -37,6 +37,7 @@ from torchvision.utils import make_grid
 from model import *
 from local_occ_grid_map import LocalMap
 from util import *
+from focal_loss import *
 
 # import modules
 #
@@ -205,32 +206,39 @@ def train(model, dataloader, dataset, device, optimizer, criterion, epoch, epoch
         loss.backward(torch.ones_like(loss))
         optimizer.step()
 
-        fig = plt.figure(figsize=(4, 2))
+        if i == 0:
+            fig = plt.figure(figsize=(8, 1))
+            for m in range(SEQ_LEN):   
+                # display the mask of occupancy grids:
+                a = fig.add_subplot(1,10,m+1)
+                mask = mask_binary_maps[0, m]
+                input_grid = make_grid(mask.detach().cpu())
+                input_image = input_grid.permute(1, 2, 0)
+                plt.imshow(input_image)
+                plt.xticks([])
+                plt.yticks([])
+                fontsize = 8
+                input_title = "n=" + str(m+1)
+                a.set_title(input_title, fontdict={'fontsize': fontsize})
+            fig.tight_layout()
+            wandb.log({"viz/GT": wandb.Image(fig, caption=f"iter={i}")})
+            plt.close(fig)
 
-        # --- Left: Ground Truth ---
-        ax1 = fig.add_subplot(1, 2, 1)
-        grid_gt = make_grid(mask_binary_maps[0, 0, 0].detach().cpu())
-        img_gt = grid_gt.permute(1, 2, 0)
-        ax1.imshow(img_gt)
-        ax1.set_xticks([])
-        ax1.set_yticks([])
-        ax1.set_title("GT", fontsize=8)
-
-        # --- Right: Prediction ---
-        ax2 = fig.add_subplot(1, 2, 2)
-        grid_pred = make_grid(prediction[0, 0].detach().cpu())
-        img_pred = grid_pred.permute(1, 2, 0)
-        ax2.imshow(img_pred)
-        ax2.set_xticks([])
-        ax2.set_yticks([])
-        ax2.set_title("Prediction", fontsize=8)
-
-        fig.tight_layout()
-
-        wandb.log({
-            "viz/gt|pred": wandb.Image(fig, caption=f"iter={i}")
-        })
-        plt.close(fig)
+            fig = plt.figure(figsize=(8, 1))
+            for m in range(SEQ_LEN):   
+                # display the mask of occupancy grids:
+                a = fig.add_subplot(1,SEQ_LEN,m+1)
+                pred = prediction[0,m]
+                input_grid = make_grid(pred.detach().cpu())
+                input_image = input_grid.permute(1, 2, 0)
+                plt.imshow(input_image)
+                plt.xticks([])
+                plt.yticks([])
+                input_title = "n=" + str(m+1)
+                a.set_title(input_title, fontdict={'fontsize': fontsize})
+            fig.tight_layout()
+            wandb.log({"viz/pred": wandb.Image(fig, caption=f"iter={i}")})
+            plt.close(fig)
 
         # get the loss:
         # multiple GPUs:
@@ -346,10 +354,19 @@ def validate(model, dataloader, dataset, device, criterion):
             # feed the batch to the network:
             prediction, kl_loss= model(input_binary_maps, input_occ_grid_map)
 
-            # calculate the total loss:
-            ce_loss = criterion(prediction, mask_binary_maps[:,0]).div(batch_size)
-            # total loss:
-            loss = ce_loss + BETA*kl_loss
+            end_w = 0.2  # end frame weight
+            w = torch.linspace(1.0, end_w, steps=SEQ_LEN, device=prediction.device)  # (SEQ_LEN,)
+
+            ce_loss = 0.0
+            w_sum = 0.0
+            for k in range(SEQ_LEN):
+                w_k = w[k]
+                ce_loss = ce_loss + w_k * criterion(prediction[:, k], mask_binary_maps[:, k]).div(batch_size)
+                w_sum = w_sum + w_k
+
+            ce_loss = ce_loss / w_sum
+
+            loss = ce_loss + BETA * kl_loss
 
             # multiple GPUs:
             if torch.cuda.device_count() > 1:
@@ -445,7 +462,7 @@ def main(argv):
                    EPS: 1e-08,
                    WEIGHT_DECAY: .001 }
     # set the loss criterion and optimizer:
-    criterion = nn.BCELoss(reduction='sum') 
+    criterion = BinaryFocalLossWithLogits(gamma=1.2, alpha=0.8, reduction="sum")
     criterion.to(device)
     # create an optimizer, and pass the model params to it:
     optimizer = Adam(model.parameters(), **opt_params)
