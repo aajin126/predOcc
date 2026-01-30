@@ -264,7 +264,7 @@ class Decoder(nn.Module):
                                                       kernel_size=3,
                                                       stride=1,
                                                       padding=1),
-                                            nn.Sigmoid()
+                                            #nn.Sigmoid()
                                         ])
 
     def forward(self, inputs):
