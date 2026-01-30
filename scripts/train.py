@@ -20,7 +20,6 @@
 #
 import matplotlib
 
-from scripts.model import SEQ_LEN
 matplotlib.use("Agg") 
 import torch
 import torch.nn as nn
@@ -221,7 +220,7 @@ def train(model, dataloader, dataset, device, optimizer, criterion, epoch, epoch
 
                 # --- Row 2: Pred ---
                 ax2 = fig.add_subplot(2, SEQ_LEN, SEQ_LEN + m + 1)
-                pred = prediction_rep_viz[0, m]
+                pred = prediction_rep_viz[m][0]
                 img_pred = make_grid(pred.detach().cpu()).permute(1, 2, 0)
                 ax2.imshow(img_pred)
                 ax2.set_xticks([]); ax2.set_yticks([])
