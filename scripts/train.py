@@ -186,13 +186,13 @@ def train(model, dataloader, dataset, device, optimizer, criterion, epoch, epoch
 
         end_w = 0.2  # end frame weight
         w = torch.linspace(1.0, end_w, steps=SEQ_LEN, device=prediction.device)  # (SEQ_LEN,)
-
+        prediction_rep_viz = []
         ce_loss = 0.0
         w_sum = 0.0
         for k in range(SEQ_LEN):
             prediction_rep, valid_mask = reprojection_logits(prediction[:, k], x_rel[:, k], y_rel[:, k], th_rel[:, k], MAP_X_LIMIT, MAP_Y_LIMIT)
             valid_mask = valid_mask.float()
-            prediction_rep = torch.sigmoid(prediction_rep) * valid_mask
+            prediction_rep_viz.append(torch.sigmoid(prediction_rep) * valid_mask)
             w_k = w[k]
             ce_loss = ce_loss + w_k * criterion(prediction_rep, mask_binary_maps[:, k]).div(batch_size)
             w_sum = w_sum + w_k
@@ -221,7 +221,7 @@ def train(model, dataloader, dataset, device, optimizer, criterion, epoch, epoch
 
                 # --- Row 2: Pred ---
                 ax2 = fig.add_subplot(2, SEQ_LEN, SEQ_LEN + m + 1)
-                pred = prediction[0, m]
+                pred = prediction_rep_viz[0, m]
                 img_pred = make_grid(pred.detach().cpu()).permute(1, 2, 0)
                 ax2.imshow(img_pred)
                 ax2.set_xticks([]); ax2.set_yticks([])
@@ -346,9 +346,7 @@ def validate(model, dataloader, dataset, device, criterion):
             w_sum = 0.0
             
             for k in range(SEQ_LEN):
-                prediction_rep, valid_mask = reprojection_logits(prediction[:, k], x_rel[:, k], y_rel[:, k], th_rel[:, k], MAP_X_LIMIT, MAP_Y_LIMIT)
-                valid_mask = valid_mask.float()
-                prediction_rep = torch.sigmoid(prediction_rep) * valid_mask
+                prediction_rep, _ = reprojection_logits(prediction[:, k], x_rel[:, k], y_rel[:, k], th_rel[:, k], MAP_X_LIMIT, MAP_Y_LIMIT)
                 w_k = w[k]
                 ce_loss = ce_loss + w_k * criterion(prediction_rep, mask_binary_maps[:, k]).div(batch_size)
                 w_sum = w_sum + w_k
