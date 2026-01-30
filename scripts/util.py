@@ -102,6 +102,8 @@ def reprojection_logits(source_logits, dx, dy, dtheta, x_lim, y_lim):
 
     warped_logits = F.grid_sample(source_logits, grid, mode="bilinear",
                                   padding_mode="zeros", align_corners=False)
+    
+    warped_logits = warped_logits * valid_mask
 
     return warped_logits, valid_mask
 
