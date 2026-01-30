@@ -131,27 +131,23 @@ def train(model, dataloader, dataset, device, optimizer, criterion, epoch, epoch
                         p = P_prior,
                         size=[batch_size, SEQ_LEN],
                         device = device)
+        # robot positions:
+        x_odom = torch.zeros(batch_size, SEQ_LEN).to(device)
+        y_odom = torch.zeros(batch_size, SEQ_LEN).to(device)
+        theta_odom = torch.zeros(batch_size, SEQ_LEN).to(device)
+        # Lidar measurements:
+        distances = scans[:,SEQ_LEN:] # get future 10 frames
+        # the angles of lidar scan: -135 ~ 135 degree
+        angles = torch.linspace(-(135*np.pi/180), 135*np.pi/180, distances.shape[-1]).to(device)
+        # Lidar measurements in X-Y plane: transform to the predicted robot reference frame
+        distances_x, distances_y = mask_gridMap.lidar_scan_xy(distances, angles, x_odom, y_odom, theta_odom)
+        # discretize to binary maps:
+        mask_binary_maps = mask_gridMap.discretize(distances_x, distances_y)
         # current position:
         obs_pos_N = positions[:, SEQ_LEN-1]
-        # robot positions:
+        # calculate relative future positions to current position:
         future_poses = positions[:, SEQ_LEN:] 
-
-        x_future_odom = torch.zeros(batch_size, SEQ_LEN).to(device)
-        y_future_odom = torch.zeros(batch_size, SEQ_LEN).to(device)
-        theta_future_odom = torch.zeros(batch_size, SEQ_LEN).to(device)
-        # Transform the robot future poses to the reference frame.
-        x_future_odom, y_future_odom, theta_future_odom =  mask_gridMap.robot_coordinate_transform(future_poses, obs_pos_N)
-        # Lidar measurements:
-        future_distances = scans[:,SEQ_LEN:] # get future 10 frames
-        # the angles of lidar scan: -135 ~ 135 degree
-        future_angles = torch.linspace(-(135*np.pi/180), 135*np.pi/180, future_distances.shape[-1]).to(device)
-        # Lidar measurements in X-Y plane: transform to the predicted robot reference frame
-        future_distances_x, future_distances_y = mask_gridMap.lidar_scan_xy(future_distances, future_angles, x_future_odom, y_future_odom, theta_future_odom)
-        # discretize to binary maps:
-        mask_binary_maps = mask_gridMap.discretize(future_distances_x, future_distances_y)
-
-        # calculate relative future positions to current position: 
-        # x_rel, y_rel, th_rel = mask_gridMap.robot_coordinate_transform(future_poses, obs_pos_N)
+        x_rel, y_rel, th_rel = mask_gridMap.robot_coordinate_transform(future_poses, obs_pos_N)
         
         # Create input grid maps: 
         input_gridMap = LocalMap(X_lim = MAP_X_LIMIT, 
@@ -194,8 +190,9 @@ def train(model, dataloader, dataset, device, optimizer, criterion, epoch, epoch
         ce_loss = 0.0
         w_sum = 0.0
         for k in range(SEQ_LEN):
+            prediction_rep, _ = reprojection(prediction[:, k], x_rel[:, k], y_rel[:, k], th_rel[:, k], MAP_X_LIMIT, MAP_Y_LIMIT)
             w_k = w[k]
-            ce_loss = ce_loss + w_k * criterion(prediction[:, k], mask_binary_maps[:, k]).div(batch_size)
+            ce_loss = ce_loss + w_k * criterion(prediction_rep, mask_binary_maps[:, k]).div(batch_size)
             w_sum = w_sum + w_k
 
         ce_loss = ce_loss / w_sum
@@ -292,27 +289,23 @@ def validate(model, dataloader, dataset, device, criterion):
                             p = P_prior,
                             size=[batch_size, SEQ_LEN],
                             device = device)
+            # robot positions:
+            x_odom = torch.zeros(batch_size, SEQ_LEN).to(device)
+            y_odom = torch.zeros(batch_size, SEQ_LEN).to(device)
+            theta_odom = torch.zeros(batch_size, SEQ_LEN).to(device)
+            # Lidar measurements:
+            distances = scans[:,SEQ_LEN:] # get future 10 frames
+            # the angles of lidar scan: -135 ~ 135 degree
+            angles = torch.linspace(-(135*np.pi/180), 135*np.pi/180, distances.shape[-1]).to(device)
+            # Lidar measurements in X-Y plane: transform to the predicted robot reference frame
+            distances_x, distances_y = mask_gridMap.lidar_scan_xy(distances, angles, x_odom, y_odom, theta_odom)
+            # discretize to binary maps:
+            mask_binary_maps = mask_gridMap.discretize(distances_x, distances_y)
             # current position:
             obs_pos_N = positions[:, SEQ_LEN-1]
-            # robot positions:
+            # calculate relative future positions to current position:
             future_poses = positions[:, SEQ_LEN:] 
-
-            x_future_odom = torch.zeros(batch_size, SEQ_LEN).to(device)
-            y_future_odom = torch.zeros(batch_size, SEQ_LEN).to(device)
-            theta_future_odom = torch.zeros(batch_size, SEQ_LEN).to(device)
-            # Transform the robot future poses to the reference frame.
-            x_future_odom, y_future_odom, theta_future_odom =  mask_gridMap.robot_coordinate_transform(future_poses, obs_pos_N)
-            # Lidar measurements:
-            future_distances = scans[:,SEQ_LEN:] # get future 10 frames
-            # the angles of lidar scan: -135 ~ 135 degree
-            future_angles = torch.linspace(-(135*np.pi/180), 135*np.pi/180, future_distances.shape[-1]).to(device)
-            # Lidar measurements in X-Y plane: transform to the predicted robot reference frame
-            future_distances_x, future_distances_y = mask_gridMap.lidar_scan_xy(future_distances, future_angles, x_future_odom, y_future_odom, theta_future_odom)
-            # discretize to binary maps:
-            mask_binary_maps = mask_gridMap.discretize(future_distances_x, future_distances_y)
-
-            # calculate relative future positions to current position: 
-            # x_rel, y_rel, th_rel = mask_gridMap.robot_coordinate_transform(future_poses, obs_pos_N)
+            x_rel, y_rel, th_rel = mask_gridMap.robot_coordinate_transform(future_poses, obs_pos_N)
             
             # Create input grid maps: 
             input_gridMap = LocalMap(X_lim = MAP_X_LIMIT, 
@@ -353,8 +346,9 @@ def validate(model, dataloader, dataset, device, criterion):
             ce_loss = 0.0
             w_sum = 0.0
             for k in range(SEQ_LEN):
+                prediction_rep, _ = reprojection(prediction[:, k], x_rel[:, k], y_rel[:, k], th_rel[:, k], MAP_X_LIMIT, MAP_Y_LIMIT)
                 w_k = w[k]
-                ce_loss = ce_loss + w_k * criterion(prediction[:, k], mask_binary_maps[:, k]).div(batch_size)
+                ce_loss = ce_loss + w_k * criterion(prediction_rep, mask_binary_maps[:, k]).div(batch_size)
                 w_sum = w_sum + w_k
 
             ce_loss = ce_loss / w_sum
