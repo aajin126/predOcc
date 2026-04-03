@@ -225,10 +225,10 @@ class Encoder(nn.Module):
                                              num_residual_hiddens=num_residual_hiddens)
 
     def forward(self, inputs):
-        x = self._conv_1(inputs)
-        x = self._conv_2(x)
+        skip_32 = self._conv_1(inputs)
+        x = self._conv_2(skip_32)
         x = self._residual_stack(x)
-        return x # predicted_map 
+        return x, skip_32 # predicted_map 
 
 # Decoder:
 class Decoder(nn.Module):
@@ -251,6 +251,17 @@ class Decoder(nn.Module):
                                             nn.ReLU()
                                         ])
 
+        self._skip_fuse = nn.Sequential(*[
+                                            nn.Conv2d(in_channels=num_hiddens,
+                                                      out_channels=num_hiddens//2,
+                                                      kernel_size=3,
+                                                      stride=1,
+                                                      padding=1,
+                                                      bias=False),
+                                            nn.BatchNorm2d(num_hiddens//2),
+                                            nn.ReLU()
+                                        ])
+
         self._conv_trans_1 = nn.Sequential(*[
                                             nn.ConvTranspose2d(in_channels=num_hiddens//2,
                                                               out_channels=num_hiddens//2,
@@ -267,9 +278,14 @@ class Decoder(nn.Module):
                                             nn.Sigmoid()
                                         ])
 
-    def forward(self, inputs):
+    def forward(self, inputs, skip_32=None):
         x = self._residual_stack(inputs)
         x = self._conv_trans_2(x)
+
+        if skip_32 is not None:
+            x = torch.cat([x, skip_32], dim=1)
+            x = self._skip_fuse(x)
+
         x = self._conv_trans_1(x)
         return x
 
@@ -305,11 +321,11 @@ class VAE_Encoder(nn.Module):
         # input reshape:
         x = x.reshape(-1, self.input_channels, IMG_SIZE, IMG_SIZE)
         # Encoder:
-        encoder_out = self._encoder(x)
+        encoder_out, skip_32 = self._encoder(x)
         # get `mean` and `log_var`:
         z_mu = self._encoder_z_mu(encoder_out)
         z_log_sd = self._encoder_z_log_sd(encoder_out)
-        return z_mu, z_log_sd
+        return z_mu, z_log_sd, skip_32
 
 # our proposed model: SOGMP++
 class RVAEP(nn.Module):
@@ -392,7 +408,7 @@ class RVAEP(nn.Module):
                                               cur_state=[h_enc, enc_state])
         
         enc_in = torch.cat([h_enc, x_map], dim=1)  # concatenate along channel axis
-        z_mu, z_log_sd = self._encoder(enc_in)
+        z_mu, z_log_sd, skip_32 = self._encoder(enc_in)
 
         # get the latent vector through reparameterization:
         z, kl_loss = self.vae_reparameterize(z_mu, z_log_sd)
@@ -401,7 +417,7 @@ class RVAEP(nn.Module):
         # reshape:
         z = z.reshape(-1, 2, self.z_w, self.z_w)
         x_d = self._decoder_z_mu(z)
-        prediction = self._decoder(x_d)
+        prediction = self._decoder(x_d, skip_32=skip_32)
         prediction = prediction.view(b, SEQ_LEN, self.output_channels, IMG_SIZE, IMG_SIZE)
 
         return prediction, kl_loss
