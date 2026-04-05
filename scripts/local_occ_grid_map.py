@@ -21,6 +21,7 @@
 # import pytorch modules
 #
 import torch
+import torch.nn.functional as F
 from bresenham_torch import bresenhamline
 
 #
@@ -173,7 +174,82 @@ class LocalMap:
         prob_map = self.calc_MLE(prob_map, threshold_p_occ)
 
         return prob_map
-    
+
+    def to_prob_local_overlap_map(self, binary_map, threshold_p_occ,
+                                kernel_size=3,
+                                exact_overlap_threshold=0.25,
+                                dilated_overlap_threshold=0.35,
+                                max_frame_gap=3,
+                                min_occ_frames=1,
+                                neighbor_kernel=3,
+                                min_static_neighbors=1):
+        import torch
+        import torch.nn.functional as F
+
+        log_map = torch.sum(self.occ_map, dim=1)
+        prob_map = self.retrieve_p(log_map)   # (B,H,W)
+
+        batch_size, seq_len, height, width = binary_map.shape
+        max_gap = min(max_frame_gap, seq_len - 1)
+
+        occ_count = binary_map.sum(dim=1)                    # (B,H,W)
+        occupied_support = occ_count >= min_occ_frames       # bool
+
+        if max_gap >= 1:
+            exact_scores = []
+            dilated_scores = []
+
+            for gap in range(1, max_gap + 1):
+                x1 = binary_map[:, :-gap].float().reshape(batch_size * (seq_len - gap), 1, height, width)
+                x2 = binary_map[:, gap:].float().reshape(batch_size * (seq_len - gap), 1, height, width)
+
+                # exact overlap
+                exact_overlap = (x1 * x2).reshape(batch_size, seq_len - gap, height, width)
+                exact_scores.append(exact_overlap.mean(dim=1))
+
+                # dilation overlap
+                x1_dil = F.max_pool2d(x1, kernel_size=kernel_size, stride=1, padding=kernel_size // 2)
+                x2_dil = F.max_pool2d(x2, kernel_size=kernel_size, stride=1, padding=kernel_size // 2)
+                dilated_overlap = (x1_dil * x2_dil).reshape(batch_size, seq_len - gap, height, width)
+                dilated_scores.append(dilated_overlap.mean(dim=1))
+
+            # permissive: any gap that supports it can help
+            exact_score_map = torch.stack(exact_scores, dim=1).max(dim=1)[0]
+            dilated_score_map = torch.stack(dilated_scores, dim=1).max(dim=1)[0]
+
+        else:
+            exact_score_map = binary_map[:, 0].float()
+            dilated_score_map = binary_map[:, 0].float()
+
+        prob_valid = prob_map >= threshold_p_occ
+
+        # strong static
+        strong_static = prob_valid & occupied_support & (exact_score_map >= exact_overlap_threshold)
+
+        # weak static from dilation evidence
+        weak_static = prob_valid & occupied_support & (~strong_static) & (dilated_score_map >= dilated_overlap_threshold)
+
+        static_map = torch.zeros_like(prob_map, dtype=torch.float32)
+        static_map[weak_static] = 0.5
+        static_map[strong_static] = 1.0
+
+        # neighbor-based promotion: if a pixel is occupied and near any static pixel, promote to weak static
+        static_seed = (static_map > 0).float().unsqueeze(1)
+        neighbor_count = F.conv2d(
+            static_seed,
+            torch.ones(1, 1, neighbor_kernel, neighbor_kernel, device=static_map.device),
+            padding=neighbor_kernel // 2
+        ).squeeze(1)
+
+        promote_weak = occupied_support & (static_map == 0.0) & (neighbor_count >= min_static_neighbors)
+        static_map[promote_weak] = 0.5
+
+        # if weak static is also exact-supported, upgrade to strong
+        promote_strong = (static_map == 0.5) & (exact_score_map >= exact_overlap_threshold)
+        static_map[promote_strong] = 1.0
+
+        return static_map
+        
     def origin_pose_prediction(self, vel_N, obs_pos_N, T, noise_std=[0,0,0]):
         """
         Predict the future origin pose of the robot: find the predicted reference frame
