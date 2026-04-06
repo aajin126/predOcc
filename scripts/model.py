@@ -361,7 +361,6 @@ class RVAEP(nn.Module):
                                 num_residual_layers,
                                 num_residual_hiddens)
 
-
     def vae_reparameterize(self, z_mu, z_log_sd):
         """
         :param mu: mean from the encoder's latent space

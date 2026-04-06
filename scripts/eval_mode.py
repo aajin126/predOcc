@@ -23,7 +23,6 @@ import torch.nn as nn
 from torch.optim import Adam
 from tqdm import tqdm
 import time
-from PIL import Image
 
 # visualize:
 from tensorboardX import SummaryWriter
@@ -35,6 +34,7 @@ import torchvision.transforms as transforms
 import torchvision
 import matplotlib
 from torchvision.utils import make_grid
+from PIL import Image
 #from utils import save_reconstructed_images, image_to_vid, save_loss_plot
 matplotlib.style.use('ggplot')
 import pandas as pd
@@ -78,27 +78,64 @@ MAP_X_LIMIT = [0, 6.4]      # Map limits on the x-axis
 MAP_Y_LIMIT = [-3.2, 3.2]   # Map limits on the y-axis
 RESOLUTION = 0.1        # Grid resolution in [m]'
 TRESHOLD_P_OCC = 0.8    # Occupancy threshold
+SAMPLE_COLORS = np.array([
+    [0.90, 0.15, 0.15],
+    [0.10, 0.45, 0.90],
+    [0.10, 0.70, 0.30],
+    [0.95, 0.65, 0.10],
+    [0.55, 0.25, 0.80],
+    [0.10, 0.75, 0.75],
+    [0.85, 0.35, 0.60],
+    [0.50, 0.50, 0.50],
+], dtype=np.float32)
+GIF_DURATION_MS = 100
+
+# for reproducibility, we seed the rng
+#
+set_seed(SEED1)        
 
 
-def save_prediction_overlay_gif(prediction_maps, gt_binary, output_path,
-                                frame_duration_ms=100, scale=8):
-    """Save a GIF of predicted maps with GT occupied cells highlighted in red."""
+def colorize_prediction_samples(predictions, occ_thr=0.3):
+    """Render occupied cells from different samples with different colors."""
+    if predictions.dim() == 4:
+        predictions = predictions.squeeze(1)
+
+    if predictions.dim() != 3:
+        raise ValueError(
+            f"predictions must have shape (num_samples, H, W) or (num_samples, 1, H, W), got {tuple(predictions.shape)}"
+        )
+
+    num_samples, height, width = predictions.shape
+    colors = torch.tensor(SAMPLE_COLORS, device=predictions.device, dtype=predictions.dtype)
+    color_image = torch.ones(height, width, 3, device=predictions.device, dtype=predictions.dtype)
+
+    for sample_index in range(num_samples):
+        color = colors[sample_index % len(SAMPLE_COLORS)]
+        mask = predictions[sample_index] > occ_thr
+        color_image[mask] = color
+
+    return color_image.detach().cpu()
+
+
+def save_prediction_samples_gif(prediction_sample_maps, output_path,
+                                occ_thr=0.3, frame_duration_ms=GIF_DURATION_MS, scale=8):
+    """Save a GIF whose frames are time steps with each sample rendered in a different color."""
     frames = []
 
-    for frame_idx in range(prediction_maps.shape[0]):
-        pred_map = prediction_maps[frame_idx, 0].detach().cpu().clamp(0, 1).numpy()
-        gt_map = gt_binary[frame_idx, 0].detach().cpu().numpy() > 0.5
+    if prediction_sample_maps.dim() != 5:
+        raise ValueError(
+            "prediction_sample_maps must have shape (num_samples, T, 1, H, W), "
+            f"got {tuple(prediction_sample_maps.shape)}"
+        )
 
-        pred_uint8 = (pred_map * 255).astype(np.uint8)
-        rgb_frame = np.stack([pred_uint8, pred_uint8, pred_uint8], axis=-1)
-        rgb_frame[gt_map] = np.array([255, 0, 0], dtype=np.uint8)
+    for frame_idx in range(prediction_sample_maps.shape[1]):
+        color_image = colorize_prediction_samples(prediction_sample_maps[:, frame_idx], occ_thr=occ_thr)
+        color_uint8 = (color_image.clamp(0, 1).numpy() * 255).astype(np.uint8)
 
-        pil_frame = Image.fromarray(rgb_frame, mode="RGB")
+        pil_frame = Image.fromarray(color_uint8, mode="RGB")
         if scale != 1:
-            pil_frame = pil_frame.resize(
-                (IMG_SIZE * scale, IMG_SIZE * scale),
-                Image.Resampling.NEAREST,
-            )
+            width, height = pil_frame.size
+            pil_frame = pil_frame.resize((width * scale, height * scale), Image.Resampling.NEAREST)
         frames.append(pil_frame)
 
     if frames:
@@ -109,10 +146,6 @@ def save_prediction_overlay_gif(prediction_maps, gt_binary, output_path,
             duration=frame_duration_ms,
             loop=0,
         )
-
-# for reproducibility, we seed the rng
-#
-set_seed(SEED1)        
 
 #------------------------------------------------------------------------------
 #
@@ -173,7 +206,7 @@ def main(argv):
     # for each batch in increments of batch size:
     counter = 0
     all_rows = []       
-    csv_path = os.path.join("output", "v1.7", "eval_table.csv")
+    csv_path = os.path.join("output", "v1.7_mode", "eval_table.csv")
     # get the number of batches (ceiling of train_data/batch_size):
     num_batches = int(len(eval_dataset)/eval_dataloader.batch_size)
     with torch.no_grad():
@@ -247,7 +280,8 @@ def main(argv):
             input_binary_maps = input_binary_maps.unsqueeze(2)
 
             # feed the batch to the network:
-            num_samples = 1
+            num_samples = 5
+            prediction_sample_maps = torch.zeros(num_samples, SEQ_LEN, 1, IMG_SIZE, IMG_SIZE).to(device)
             inputs_samples = input_binary_maps.repeat(num_samples,1,1,1,1)
             inputs_occ_map_samples = input_occ_grid_map.repeat(num_samples,1,1,1,1)
             
@@ -261,8 +295,10 @@ def main(argv):
                 prediction_t, _ = reprojection(prediction[:, k], x_rel[:, k], y_rel[:, k], th_rel[:, k], MAP_X_LIMIT, MAP_Y_LIMIT)
                 prediction_t = prediction_t.reshape(-1,1,1,IMG_SIZE,IMG_SIZE)
                 predictions = prediction_t.squeeze(1) 
+                prediction_sample_maps[:, k] = predictions
                 pred_mean = torch.mean(predictions, dim=0, keepdim=True)
                 prediction_maps[k, 0] = pred_mean.squeeze()
+
 
             # end timing
             if device.type == "cuda":
@@ -294,8 +330,8 @@ def main(argv):
                 fontsize = 8
                 input_title = "n=" + str(m+1)
                 a.set_title(input_title, fontdict={'fontsize': fontsize})
-            input_img_name = "./output/v1.7/mask" + str(i)+ ".jpg"
-            plt.savefig(input_img_name)
+            input_img_name = "./output/v1.7_mode/mask" + str(i)+ ".jpg"
+            plt.savefig(input_img_name, dpi=500)
             plt.close(fig)
 
             fig = plt.figure(figsize=(8, 1))
@@ -310,12 +346,16 @@ def main(argv):
                 plt.yticks([])
                 input_title = "n=" + str(m+1)
                 a.set_title(input_title, fontdict={'fontsize': fontsize})
-            input_img_name = "./output/v1.7/pred" + str(i)+ ".jpg"
+            input_img_name = "./output/v1.7_mode/pred" + str(i)+ ".jpg"
             plt.savefig(input_img_name)
             plt.close(fig)
 
-            overlay_gif_name = "./output/v1.7/pred_overlay" + str(i) + ".gif"
-            save_prediction_overlay_gif(prediction_maps, mask_binary_maps[0], overlay_gif_name)
+            input_img_name = "./output/v1.7_mode/samples" + str(i)+ ".gif"
+            save_prediction_samples_gif(
+                prediction_sample_maps,
+                input_img_name,
+                occ_thr=0.3,
+            )
 
             # fig = plt.figure(figsize=(8, 1))
             # for m in range(SEQ_LEN):   
