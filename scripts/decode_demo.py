@@ -141,7 +141,7 @@ def main(argv):
     # for each batch in increments of batch size:
     counter = 0
     all_rows = []       
-    csv_path = os.path.join("output", "v1.6", "eval_table.csv")
+    csv_path = os.path.join("output", "v1.6_miou", "eval_table.csv")
     # get the number of batches (ceiling of train_data/batch_size):
     num_batches = int(len(eval_dataset)/eval_dataloader.batch_size)
     with torch.no_grad():
@@ -242,7 +242,7 @@ def main(argv):
             for n in range(SEQ_LEN):
                 gt_map = mask_binary_maps[0, n]
                 pred_map = prediction_maps[n]   
-                row[f"n={n+1}"] = float(compute_iou(pred_map, gt_map, occ_thr=0.3).item())
+                row[f"n={n+1}"] = float(compute_miou(pred_map, gt_map, occ_thr=0.5).item())
             all_rows.append(row)
 
             if (i + 1) % 100 == 0:
@@ -262,7 +262,7 @@ def main(argv):
                 fontsize = 8
                 input_title = "n=" + str(m+1)
                 a.set_title(input_title, fontdict={'fontsize': fontsize})
-            input_img_name = "./output/v1.6/mask" + str(i)+ ".jpg"
+            input_img_name = "./output/v1.6_miou/mask" + str(i)+ ".jpg"
             plt.savefig(input_img_name)
             plt.close(fig)
 
@@ -278,7 +278,7 @@ def main(argv):
                 plt.yticks([])
                 input_title = "n=" + str(m+1)
                 a.set_title(input_title, fontdict={'fontsize': fontsize})
-            input_img_name = "./output/v1.6/pred" + str(i)+ ".jpg"
+            input_img_name = "./output/v1.6_miou/pred" + str(i)+ ".jpg"
             plt.savefig(input_img_name)
             plt.close(fig)
 
