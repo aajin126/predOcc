@@ -7,10 +7,11 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
 files = {
     "v1.6": os.path.join(ROOT, "output", "v1.6", "eval_table.csv"),
-    #"v1.7": os.path.join(ROOT, "output", "v1.7", "eval_table.csv"),
+    "v1.7": os.path.join(ROOT, "output", "v1.7", "eval_table.csv"),
+    "v1.7.1": os.path.join(ROOT, "output", "v1.7.1", "eval_table.csv"),
     #"v7.7.1": os.path.join(ROOT, "output", "v7.7.1", "eval_table.csv"),
     #"v6.6.0": os.path.join(ROOT, "output", "v6.6.0", "eval_table.csv"),
-    "vdt": os.path.join(ROOT, "output", "vdt", "eval_table.csv"),
+    #"vdt": os.path.join(ROOT, "output", "vdt", "eval_table.csv"),
     # "ldm2.0": os.path.join(ROOT, "output", "ldm2.0", "eval_table.csv"),
     # "ldm2.1": os.path.join(ROOT, "output", "ldm2.1", "eval_table.csv"),
     #"v6.2.0.1": os.path.join(ROOT, "output", "v6.2.0.1", "eval_table.csv"),

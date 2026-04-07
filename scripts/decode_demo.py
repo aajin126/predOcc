@@ -173,7 +173,7 @@ def main(argv):
     # for each batch in increments of batch size:
     counter = 0
     all_rows = []       
-    csv_path = os.path.join("output", "v1.7", "eval_table.csv")
+    csv_path = os.path.join("output", "v1.7.1", "eval_table.csv")
     # get the number of batches (ceiling of train_data/batch_size):
     num_batches = int(len(eval_dataset)/eval_dataloader.batch_size)
     with torch.no_grad():
@@ -257,6 +257,8 @@ def main(argv):
             t0 = time.perf_counter()
             prediction, kl_loss = model(inputs_samples, inputs_occ_map_samples) #(B, T, C, H, W)
 
+            prediction_maps_org = prediction.squeeze(0)
+
             for k in range(SEQ_LEN):  
                 prediction_t, _ = reprojection(prediction[:, k], x_rel[:, k], y_rel[:, k], th_rel[:, k], MAP_X_LIMIT, MAP_Y_LIMIT)
                 prediction_t = prediction_t.reshape(-1,1,1,IMG_SIZE,IMG_SIZE)
@@ -294,8 +296,8 @@ def main(argv):
                 fontsize = 8
                 input_title = "n=" + str(m+1)
                 a.set_title(input_title, fontdict={'fontsize': fontsize})
-            input_img_name = "./output/v1.7/mask" + str(i)+ ".jpg"
-            plt.savefig(input_img_name)
+            input_img_name = "./output/v1.7.1/mask" + str(i)+ ".jpg"
+            plt.savefig(input_img_name, dpi=500)
             plt.close(fig)
 
             fig = plt.figure(figsize=(8, 1))
@@ -310,28 +312,28 @@ def main(argv):
                 plt.yticks([])
                 input_title = "n=" + str(m+1)
                 a.set_title(input_title, fontdict={'fontsize': fontsize})
-            input_img_name = "./output/v1.7/pred" + str(i)+ ".jpg"
-            plt.savefig(input_img_name)
+            input_img_name = "./output/v1.7.1/pred" + str(i)+ ".jpg"
+            plt.savefig(input_img_name, dpi=500)
             plt.close(fig)
 
-            overlay_gif_name = "./output/v1.7/pred_overlay" + str(i) + ".gif"
+            overlay_gif_name = "./output/v1.7.1/pred_overlay" + str(i) + ".gif"
             save_prediction_overlay_gif(prediction_maps, mask_binary_maps[0], overlay_gif_name)
 
-            # fig = plt.figure(figsize=(8, 1))
-            # for m in range(SEQ_LEN):   
-            #     # display the mask of occupancy grids:
-            #     a = fig.add_subplot(1,10,m+1)
-            #     pred = prediction_maps_org[m]
-            #     input_grid = make_grid(pred.detach().cpu())
-            #     input_image = input_grid.permute(1, 2, 0)
-            #     plt.imshow(input_image)
-            #     plt.xticks([])
-            #     plt.yticks([])
-            #     input_title = "n=" + str(m+1)
-            #     a.set_title(input_title, fontdict={'fontsize': fontsize})
-            # input_img_name = "./output/pred_org" + str(i)+ ".jpg"
-            # plt.savefig(input_img_name)
-            # plt.close(fig)
+            fig = plt.figure(figsize=(8, 1))
+            for m in range(SEQ_LEN):   
+                # display the mask of occupancy grids:
+                a = fig.add_subplot(1,10,m+1)
+                pred = prediction_maps_org[m]
+                input_grid = make_grid(pred.detach().cpu())
+                input_image = input_grid.permute(1, 2, 0)
+                plt.imshow(input_image)
+                plt.xticks([])
+                plt.yticks([])
+                input_title = "n=" + str(m+1)
+                a.set_title(input_title, fontdict={'fontsize': fontsize})
+            input_img_name = "./output/v1.7.1/pred_org" + str(i)+ ".jpg"
+            plt.savefig(input_img_name, dpi=500)
+            plt.close(fig)
 
             print(i)
 
