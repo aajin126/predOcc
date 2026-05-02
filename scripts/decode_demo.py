@@ -23,7 +23,7 @@ import torch.nn as nn
 from torch.optim import Adam
 from tqdm import tqdm
 import time
-
+from PIL import Image
 # visualize:
 from tensorboardX import SummaryWriter
 #from torch.utils.tensorboard import SummaryWriter
@@ -58,10 +58,11 @@ from eval import *
 
 # general global values
 #
-NUM_ARGS = 2
+NUM_ARGS = 3
 IMG_SIZE = 64
 SPACE = " "        
 log_dir = '../model/model.pth'   
+IOU_THRESHOLDS = (0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9)
 
 # Constants
 NUM_CLASSES = 1
@@ -77,7 +78,7 @@ MAP_X_LIMIT = [0, 6.4]      # Map limits on the x-axis
 MAP_Y_LIMIT = [-3.2, 3.2]   # Map limits on the y-axis
 RESOLUTION = 0.1        # Grid resolution in [m]'
 TRESHOLD_P_OCC = 0.8    # Occupancy threshold
-
+all_ssim_rows = []
 # for reproducibility, we seed the rng
 #
 set_seed(SEED1)        
@@ -96,6 +97,51 @@ set_seed(SEED1)
 #
 # This method is the main function.
 #
+def save_prediction_overlay_gif(prediction_maps, gt_binary, output_path,
+                                frame_duration_ms=100, scale=8):
+    """Save a GIF of predicted maps with GT occupied cells highlighted in red."""
+    frames = []
+
+    for frame_idx in range(prediction_maps.shape[0]):
+        pred_map = prediction_maps[frame_idx, 0].detach().cpu().clamp(0, 1).numpy()
+        gt_map = gt_binary[frame_idx, 0].detach().cpu().numpy() > 0.5
+
+        pred_uint8 = (pred_map * 255).astype(np.uint8)
+        rgb_frame = np.stack([pred_uint8, pred_uint8, pred_uint8], axis=-1)
+        rgb_frame[gt_map] = np.array([255, 0, 0], dtype=np.uint8)
+
+        pil_frame = Image.fromarray(rgb_frame, mode="RGB")
+        if scale != 1:
+            pil_frame = pil_frame.resize(
+                (IMG_SIZE * scale, IMG_SIZE * scale),
+                Image.Resampling.NEAREST,
+            )
+        frames.append(pil_frame)
+
+    if frames:
+        frames[0].save(
+            output_path,
+            save_all=True,
+            append_images=frames[1:],
+            duration=frame_duration_ms,
+            loop=0,
+        )
+
+
+def save_iou_tables(all_rows_by_thr, output_dir):
+    for occ_thr, rows in all_rows_by_thr.items():
+        csv_path = os.path.join(output_dir, f"eval_table_iou_{occ_thr:.1f}.csv")
+        pd.DataFrame(rows).to_csv(csv_path, index=False)
+        print(f"Saved: {csv_path}")
+
+def save_ssim_table(all_ssim_rows, output_dir):
+    """Save SSIM metrics to CSV file."""
+    if all_ssim_rows:
+        csv_path = os.path.join(output_dir, "eval_table_ssim.csv")
+        pd.DataFrame(all_ssim_rows).to_csv(csv_path, index=False)
+        print(f"Saved: {csv_path}")
+
+
 def main(argv):
     # ensure we have the correct number of arguments:
     if(len(argv) != NUM_ARGS):
@@ -103,8 +149,10 @@ def main(argv):
         exit(-1)
 
     # define local variables:
-    mdl_path = argv[0]
-    fImg = argv[1]
+    output_dir = argv[0]
+    mdl_path = argv[1]
+    fImg = argv[2]
+    os.makedirs(output_dir, exist_ok=True)
 
     # set the device to use GPU if available:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -140,8 +188,7 @@ def main(argv):
 
     # for each batch in increments of batch size:
     counter = 0
-    all_rows = []       
-    csv_path = os.path.join("output", "v1.6_miou", "eval_table.csv")
+    all_rows_by_thr = {occ_thr: [] for occ_thr in IOU_THRESHOLDS}
     # get the number of batches (ceiling of train_data/batch_size):
     num_batches = int(len(eval_dataset)/eval_dataloader.batch_size)
     with torch.no_grad():
@@ -238,49 +285,69 @@ def main(argv):
             t1 = time.perf_counter()
             total_pred_time_ms = (t1 - t0) * 1000
 
-            row = {"i": int(i), "Inference_time": float(total_pred_time_ms)}
+            ssim_row = {
+                "i": int(i),
+            }
             for n in range(SEQ_LEN):
                 gt_map = mask_binary_maps[0, n]
-                pred_map = prediction_maps[n]   
-                row[f"n={n+1}"] = float(compute_miou(pred_map, gt_map, occ_thr=0.5).item())
-            all_rows.append(row)
+                pred_map = prediction_maps[n]
+                ssim_value = compute_ssim_metric(pred_map, gt_map)
+                ssim_row[f"n={n+1}"] = ssim_value
+            all_ssim_rows.append(ssim_row)
+
+            for occ_thr in IOU_THRESHOLDS:
+                row = {
+                    "i": int(i),
+                    "Inference_time": float(total_pred_time_ms),
+                    "occ_thr": float(occ_thr),
+                }
+                for n in range(SEQ_LEN):
+                    gt_map = mask_binary_maps[0, n]
+                    pred_map = prediction_maps[n]
+                    iou_value = float(compute_iou(pred_map, gt_map, occ_thr=occ_thr).item())
+                    row[f"n={n+1}"] = iou_value
+                all_rows_by_thr[occ_thr].append(row)
 
             if (i + 1) % 100 == 0:
-                pd.DataFrame(all_rows).to_csv(csv_path, index=False)
+                #save_iou_tables(all_rows_by_thr, output_dir)
+                save_ssim_table(all_ssim_rows, output_dir)
 
             # display input occupancy map:
-            fig = plt.figure(figsize=(8, 1))
-            for m in range(SEQ_LEN):   
-                # display the mask of occupancy grids:
-                a = fig.add_subplot(1,10,m+1)
-                mask = mask_binary_maps[0, m]
-                input_grid = make_grid(mask.detach().cpu())
-                input_image = input_grid.permute(1, 2, 0)
-                plt.imshow(input_image)
-                plt.xticks([])
-                plt.yticks([])
-                fontsize = 8
-                input_title = "n=" + str(m+1)
-                a.set_title(input_title, fontdict={'fontsize': fontsize})
-            input_img_name = "./output/v1.6_miou/mask" + str(i)+ ".jpg"
-            plt.savefig(input_img_name)
-            plt.close(fig)
+            # fig = plt.figure(figsize=(8, 1))
+            # for m in range(SEQ_LEN):   
+            #     # display the mask of occupancy grids:
+            #     a = fig.add_subplot(1,10,m+1)
+            #     mask = mask_binary_maps[0, m]
+            #     input_grid = make_grid(mask.detach().cpu())
+            #     input_image = input_grid.permute(1, 2, 0)
+            #     plt.imshow(input_image)
+            #     plt.xticks([])
+            #     plt.yticks([])
+            #     fontsize = 8
+            #     input_title = "n=" + str(m+1)
+            #     a.set_title(input_title, fontdict={'fontsize': fontsize})
+            # input_img_name = os.path.join(output_dir, "mask" + str(i) + ".jpg")
+            # plt.savefig(input_img_name)
+            # plt.close(fig)
 
-            fig = plt.figure(figsize=(8, 1))
-            for m in range(SEQ_LEN):   
-                # display the mask of occupancy grids:
-                a = fig.add_subplot(1,10,m+1)
-                pred = prediction_maps[m]
-                input_grid = make_grid(pred.detach().cpu())
-                input_image = input_grid.permute(1, 2, 0)
-                plt.imshow(input_image)
-                plt.xticks([])
-                plt.yticks([])
-                input_title = "n=" + str(m+1)
-                a.set_title(input_title, fontdict={'fontsize': fontsize})
-            input_img_name = "./output/v1.6_miou/pred" + str(i)+ ".jpg"
-            plt.savefig(input_img_name)
-            plt.close(fig)
+            # fig = plt.figure(figsize=(8, 1))
+            # for m in range(SEQ_LEN):   
+            #     # display the mask of occupancy grids:
+            #     a = fig.add_subplot(1,10,m+1)
+            #     pred = prediction_maps[m]
+            #     input_grid = make_grid(pred.detach().cpu())
+            #     input_image = input_grid.permute(1, 2, 0)
+            #     plt.imshow(input_image)
+            #     plt.xticks([])
+            #     plt.yticks([])
+            #     input_title = "n=" + str(m+1)
+            #     a.set_title(input_title, fontdict={'fontsize': fontsize})
+            # input_img_name = os.path.join(output_dir, "pred" + str(i) + ".jpg")
+            # plt.savefig(input_img_name)
+            # plt.close(fig)
+
+            # overlay_gif_name = os.path.join(output_dir, "pred_gif" + str(i) + ".gif")
+            # save_prediction_overlay_gif(prediction_maps, mask_binary_maps[0], overlay_gif_name)
 
             # fig = plt.figure(figsize=(8, 1))
             # for m in range(SEQ_LEN):   
@@ -294,15 +361,13 @@ def main(argv):
             #     plt.yticks([])
             #     input_title = "n=" + str(m+1)
             #     a.set_title(input_title, fontdict={'fontsize': fontsize})
-            # input_img_name = "./output/pred_org" + str(i)+ ".jpg"
+            # input_img_name = os.path.join(output_dir, "pred_org" + str(i) + ".jpg")
             # plt.savefig(input_img_name)
             # plt.close(fig)
 
             print(i)
 
-    df = pd.DataFrame(all_rows)
-    df.to_csv(csv_path, index=False)
-    print(f"Saved: {csv_path}")
+    save_iou_tables(all_rows_by_thr, output_dir)
     # exit gracefully
     #
     return True
